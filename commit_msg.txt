@@ -1,4 +1,4 @@
-Fix window title and taskbar icon
+Release v1.0.8
 
 - Remove shield emoji from window title
-- Fix taskbar icon to show custom icon instead of blue square
+- Fix taskbar icon to show custom icon
