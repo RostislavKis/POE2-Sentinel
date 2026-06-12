@@ -1,5 +1,5 @@
 """
-Test runner for POE2 Flask Bot - Terrain Overlay.
+Test runner for POE2 Sentinel.
 
 Usage:
     py run_tests.py           # Run all tests
@@ -15,15 +15,15 @@ def main():
     # Change to project directory
     project_dir = os.path.dirname(os.path.abspath(__file__))
     os.chdir(project_dir)
-    
+
     # Build pytest command
     cmd = [sys.executable, "-m", "pytest", "tests/", "-v", "--tb=short"]
-    
+
     # Add any additional arguments
     cmd.extend(sys.argv[1:])
-    
+
     print("=" * 60)
-    print("Running POE2 Flask Bot Tests")
+    print("Running POE2 Sentinel Tests")
     print("=" * 60)
     print(f"Command: {' '.join(cmd)}")
     print()
