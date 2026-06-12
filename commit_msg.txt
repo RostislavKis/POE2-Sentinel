@@ -1,4 +1,4 @@
-Fix installer launch elevation and sidebar alignment
+Release v1.0.1
 
-- Installer now launches app with UAC elevation (shellexec flag)
-- Fixed Map Tools sidebar icon alignment (changed emoji)
+- Fix installer launch with UAC elevation
+- Fix Map Tools sidebar icon alignment
