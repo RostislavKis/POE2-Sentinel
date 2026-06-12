@@ -1,5 +1,4 @@
-Fix auto-updater DLL error and dialog text cutoff
+Release v1.0.4
 
-- Clean up PyInstaller _MEI* temp folders before launching new version
-- Use scrollable textbox for long dialog messages
-- Prevents "Failed to load Python DLL" error during updates
+- Fix auto-updater Python DLL error (clean _MEI* temp folders)
+- Fix dialog text cutoff (scrollable textbox for long messages)
