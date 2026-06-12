@@ -1,5 +1,4 @@
-Release v1.0.2
+Add custom window icon to title bar
 
-- Fixed update dialog buttons not visible (auto-size based on content)
-- Fixed auto-updater Python DLL error (better cleanup and delays)
-- Updater now shows progress window during update
+- Window now shows the POE2-Sentinel-Icon.ico in title bar
+- Matches the exe icon instead of default blue square

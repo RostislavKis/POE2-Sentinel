@@ -49,6 +49,11 @@ class SentinelGUI:
         self.root.geometry("820x600")
         self.root.minsize(700, 500)
 
+        # Set window icon (title bar icon)
+        icon_path = os.path.join(os.path.dirname(__file__), "POE2-Sentinel-Icon.ico")
+        if os.path.exists(icon_path):
+            self.root.iconbitmap(icon_path)
+
         # GitHub-dark palette (mirrors POE2Tools DarkTheme.xaml). Legacy keys
         # (primary/text/success/danger/life/mana) are kept so existing handlers
         # keep working against the new values.
