@@ -1,4 +1,4 @@
-Release v1.0.1
+Sync installer version with version.py during build
 
-- Fix installer launch with UAC elevation
-- Fix Map Tools sidebar icon alignment
+- build_exe.py now updates both version.py and installer.iss
+- Prevents version mismatch in installer filename

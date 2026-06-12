@@ -23,6 +23,7 @@ SPEC_FILE = BUILD_DIR / "POE2Sentinel.spec"
 DIST_DIR = PROJECT_ROOT / "dist"
 EXE_PATH = DIST_DIR / "POE2Sentinel.exe"  # Single-file build outputs directly to dist/
 VERSION_FILE = PROJECT_ROOT / "version.py"
+INSTALLER_ISS = BUILD_DIR / "installer.iss"
 
 
 def header(text: str) -> None:
@@ -39,7 +40,8 @@ def get_current_version() -> str:
 
 
 def set_version(new_version: str) -> None:
-    """Write new version to version.py."""
+    """Write new version to version.py and installer.iss."""
+    # Update version.py
     content = VERSION_FILE.read_text()
     new_content = re.sub(
         r'(VERSION\s*=\s*["\'])([^"\']+)(["\'])',
@@ -48,6 +50,17 @@ def set_version(new_version: str) -> None:
     )
     VERSION_FILE.write_text(new_content)
     print(f"[OK] Updated version.py: {new_version}")
+
+    # Update installer.iss
+    if INSTALLER_ISS.exists():
+        iss_content = INSTALLER_ISS.read_text()
+        iss_new = re.sub(
+            r'(#define MyAppVersion\s+")[^"]+(")',
+            f'\\g<1>{new_version}\\g<2>',
+            iss_content
+        )
+        INSTALLER_ISS.write_text(iss_new)
+        print(f"[OK] Updated installer.iss: {new_version}")
 
 
 def bump_version(bump_type: str) -> str:
