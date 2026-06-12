@@ -1,7 +1,5 @@
-Fix auto-updater dialog and update process
+Release v1.0.2
 
-- Dialog now auto-sizes based on message content (fixes buttons not visible)
-- Updater now shows progress window (visible PowerShell console)
-- Added delays to ensure file handles are released before update
-- Delete old exe before copying new one to avoid conflicts
-- Better error messages and user feedback
+- Fixed update dialog buttons not visible (auto-size based on content)
+- Fixed auto-updater Python DLL error (better cleanup and delays)
+- Updater now shows progress window during update
