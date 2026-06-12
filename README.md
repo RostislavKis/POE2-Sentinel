@@ -11,6 +11,7 @@ A feature-rich companion tool for Path of Exile 2 with auto flask bot, terrain o
 - **Terrain Overlay** - Transparent radar showing map layout, monsters, NPCs, and chests
 - **Atlas Fog Reveal** - Toggle map fog of war
 - **Shader Reveal** - Permanent minimap visibility (requires game restart)
+- **Auto Updates** - Automatically checks for and installs new versions
 
 ## Requirements
 

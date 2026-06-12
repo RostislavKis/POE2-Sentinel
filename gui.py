@@ -18,6 +18,7 @@ from custom_dialog import show_info, show_error, ask_yes_no, MemoryOffsetsDialog
 from toast_notification import ToastNotification
 from coordinate_picker import pick_region
 from terrain_reader import TerrainReader
+from auto_updater import VERSION, check_for_updates, download_update, apply_update
 import keyboard
 
 # Try to import overlay (requires PyQt5)
@@ -373,18 +374,26 @@ class SentinelGUI:
         # About
         about = self._make_card(tab)
         self._make_section_header(about, "About")
-        ctk.CTkLabel(about, text="POE2 Sentinel", font=("Segoe UI", 14, "bold"),
+        ctk.CTkLabel(about, text=f"POE2 Sentinel v{VERSION}", font=("Segoe UI", 14, "bold"),
                      text_color=self.colors["text"]).pack(anchor="w", padx=16, pady=(0, 2))
         ctk.CTkLabel(about, text="Flask bot, terrain overlay, and map tools "
                                  "for Path of Exile 2.",
                      font=("Segoe UI", 11), text_color=self.colors["text_secondary"],
                      wraplength=420, justify="left").pack(anchor="w", padx=16, pady=(0, 10))
+        about_btns = ctk.CTkFrame(about, fg_color="transparent")
+        about_btns.pack(anchor="w", padx=16, pady=(0, 14))
         ctk.CTkButton(
-            about, text="❓  Help", font=("Segoe UI", 11),
+            about_btns, text="❓  Help", font=("Segoe UI", 11),
             fg_color=self.colors["bg_hover"], hover_color=self.colors["border"],
             text_color=self.colors["text"], width=110, height=30, corner_radius=6,
             command=self.show_help,
-        ).pack(anchor="w", padx=16, pady=(0, 14))
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            about_btns, text="🔄  Check for Updates", font=("Segoe UI", 11),
+            fg_color=self.colors["bg_hover"], hover_color=self.colors["border"],
+            text_color=self.colors["text"], width=160, height=30, corner_radius=6,
+            command=self.check_for_updates,
+        ).pack(side="left")
 
     def setup_hotkeys(self):
         """Register global hotkeys from config (rebindable via Settings)."""
@@ -580,6 +589,98 @@ class SentinelGUI:
             "   Set pool_type in config for ES builds.",
             colors=self.colors
         )
+
+    def check_for_updates(self):
+        """Check GitHub for updates."""
+        self.show_toast("Checking for updates...", "info")
+
+        def _check_thread():
+            release = check_for_updates()
+            self.root.after(0, lambda: self._handle_update_result(release))
+
+        threading.Thread(target=_check_thread, daemon=True).start()
+
+    def _handle_update_result(self, release):
+        """Handle update check result on main thread."""
+        if release is None:
+            self.show_toast(f"You're on the latest version (v{VERSION})", "success")
+            return
+
+        # Show first 5 lines of release notes to avoid overwhelming the user
+        notes_lines = release.release_notes.strip().split('\n')[:5]
+        notes = '\n'.join(notes_lines)
+        if len(release.release_notes.strip().split('\n')) > 5:
+            notes += "\n(+ more...)"
+
+        msg = f"Version {release.version} is available!\n\nWhat's new:\n{notes}\n\nDownload and install now?"
+
+        if ask_yes_no(self.root, "Update Available", msg, colors=self.colors):
+            self._download_and_apply_update(release)
+
+    def _download_and_apply_update(self, release):
+        """Download and apply update."""
+        # Create progress window
+        progress_win = ctk.CTkToplevel(self.root)
+        progress_win.title("Downloading Update")
+        progress_win.geometry("400x120")
+        progress_win.resizable(False, False)
+        progress_win.transient(self.root)
+        progress_win.grab_set()
+
+        # Center on parent
+        progress_win.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 400) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 120) // 2
+        progress_win.geometry(f"+{x}+{y}")
+
+        ctk.CTkLabel(progress_win, text=f"Downloading v{release.version}...",
+                     font=("Segoe UI", 12)).pack(pady=(20, 10))
+        progress_bar = ctk.CTkProgressBar(progress_win, width=350)
+        progress_bar.pack(pady=10)
+        progress_bar.set(0)
+        progress_label = ctk.CTkLabel(progress_win, text="0%", font=("Segoe UI", 10))
+        progress_label.pack()
+
+        def _download_thread():
+            def on_progress(downloaded, total):
+                if total > 0:
+                    pct = downloaded / total
+                    self.root.after(0, lambda p=pct: progress_bar.set(p))
+                    self.root.after(0, lambda p=pct: progress_label.configure(text=f"{int(p*100)}%"))
+
+            temp_path = download_update(release, on_progress)
+            self.root.after(0, lambda: self._finish_update(temp_path, progress_win))
+
+        threading.Thread(target=_download_thread, daemon=True).start()
+
+    def _finish_update(self, temp_path, progress_win):
+        """Finish update process."""
+        progress_win.destroy()
+
+        if not temp_path:
+            show_error(self.root, "Update Failed", "Failed to download update. Please try again later.", colors=self.colors)
+            return
+
+        # Check if we're running as exe
+        if not getattr(sys, 'frozen', False):
+            show_info(self.root, "Update Downloaded",
+                      f"Update downloaded to:\n{temp_path}\n\n"
+                      "Since you're running from source, please manually replace the exe.",
+                      colors=self.colors)
+            return
+
+        # Apply update
+        self.show_toast("Installing update...", "info")
+        if apply_update(temp_path):
+            show_info(self.root, "Update Ready",
+                      "Update is ready to install.\n\n"
+                      "The application will now close and restart with the new version.",
+                      colors=self.colors)
+            self.root.quit()
+        else:
+            show_error(self.root, "Update Failed",
+                       f"Failed to apply update.\n\nThe new version was downloaded to:\n{temp_path}",
+                       colors=self.colors)
 
     def pick_life_region(self):
         """Open region picker for life."""
@@ -1415,7 +1516,23 @@ class SentinelGUI:
 
     def run(self):
         """Run the GUI main loop."""
+        # Check for updates on startup (silent, non-blocking)
+        if self.config.get("auto_check_updates", True):
+            self.root.after(3000, self._silent_update_check)
         self.root.mainloop()
+
+    def _silent_update_check(self):
+        """Silently check for updates on startup."""
+        def _check_thread():
+            release = check_for_updates()
+            if release:
+                self.root.after(0, lambda: self._notify_update_available(release))
+
+        threading.Thread(target=_check_thread, daemon=True).start()
+
+    def _notify_update_available(self, release):
+        """Show toast notification that update is available."""
+        self.show_toast(f"Update v{release.version} available! Check Settings → About", "info")
 
 
 def main():

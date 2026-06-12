@@ -1,6 +1,7 @@
 {
   "game_version": "steam",
   "detection_mode": "structure",
+  "auto_check_updates": true,
   "life": {
     "threshold_mode": "percent",
     "threshold_percent": 70.0,

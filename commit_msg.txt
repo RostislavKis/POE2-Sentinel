@@ -1,0 +1,10 @@
+Add auto-update feature
+
+- New auto_updater.py module for GitHub Releases integration
+- Check for updates button in Settings → About
+- Auto-check on startup (configurable via auto_check_updates)
+- Download progress bar
+- In-place exe replacement via PowerShell script
+- Show version number in About section
+- Limit release notes to first 5 lines to avoid overwhelming users
+- Silent handling of 404 when no releases exist
