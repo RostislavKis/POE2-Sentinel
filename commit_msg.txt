@@ -1,4 +1,5 @@
-Release v1.0.6
+Remove auto-restart after update - manual launch required
 
-- Use cmd.exe to fully detach new process during auto-restart
-- Added fallback message if auto-launch fails
+- Removed unreliable auto-restart that caused Python DLL errors
+- Updater now waits for keypress after successful update
+- Updated GUI message to inform user to relaunch manually

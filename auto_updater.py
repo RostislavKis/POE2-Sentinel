@@ -227,24 +227,20 @@ try {{
 
     # Copy new exe
     Copy-Item -Path $newExe -Destination $currentExe -Force
-    Write-Host "Update installed successfully!"
+    Write-Host ""
+    Write-Host "[OK] Update installed successfully!"
 
     # Clean up temp file
     Remove-Item -Path $newExe -Force -ErrorAction SilentlyContinue
 
-    # Launch new version using cmd.exe to fully detach from this PowerShell session
-    # This ensures the new exe doesn't inherit any environment from the old process
-    Write-Host "Launching POE2 Sentinel..."
-    Write-Host "(If the app doesn't start automatically, please launch it manually)"
-    Start-Sleep -Seconds 3
-
-    # Use cmd /c start to launch in a completely new process tree
-    Start-Process cmd.exe -ArgumentList "/c", "start", '""', "`"$currentExe`"" -WindowStyle Hidden
-
     Write-Host ""
-    Write-Host "Update complete! This window will close in 5 seconds..."
-    Write-Host "If POE2 Sentinel doesn't start, please launch it manually."
-    Start-Sleep -Seconds 5
+    Write-Host "================================"
+    Write-Host "  Please launch POE2 Sentinel"
+    Write-Host "  manually to use the new version."
+    Write-Host "================================"
+    Write-Host ""
+    Write-Host "Press any key to close this window..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 
 }} catch {{
     Write-Host ""

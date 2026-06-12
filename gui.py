@@ -690,7 +690,8 @@ class SentinelGUI:
         if apply_update(temp_path):
             show_info(self.root, "Update Ready",
                       "Update is ready to install.\n\n"
-                      "The application will now close and restart with the new version.",
+                      "The application will now close. Please relaunch it manually\n"
+                      "after the updater window closes.",
                       colors=self.colors)
             self.root.quit()
         else:
