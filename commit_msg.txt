@@ -1,5 +1,5 @@
-Add GitHub button and fix auto-restart timing
+Release v1.0.5
 
-- Add "GitHub" button in Settings > About to open repo
-- Increase delay after cleanup before restart (fixes DLL error on auto-restart)
-- Renamed buttons to fit all three in About section
+- Add "GitHub" button in Settings > About
+- Fix auto-restart timing (3 second delay after cleanup)
+- Clean up _MEI* temp folders more thoroughly
