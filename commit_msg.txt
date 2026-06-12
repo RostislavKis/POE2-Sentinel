@@ -1,5 +1,4 @@
-Remove auto-restart after update - manual launch required
+Release v1.0.7
 
-- Removed unreliable auto-restart that caused Python DLL errors
-- Updater now waits for keypress after successful update
-- Updated GUI message to inform user to relaunch manually
+- Remove auto-restart after update (manual launch required)
+- Updater shows clear success message and waits for keypress
