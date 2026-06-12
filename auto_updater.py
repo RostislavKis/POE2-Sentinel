@@ -232,16 +232,19 @@ try {{
     # Clean up temp file
     Remove-Item -Path $newExe -Force -ErrorAction SilentlyContinue
 
-    # Small delay before launching
-    Start-Sleep -Seconds 1
-
-    # Launch new version
+    # Launch new version using cmd.exe to fully detach from this PowerShell session
+    # This ensures the new exe doesn't inherit any environment from the old process
     Write-Host "Launching POE2 Sentinel..."
-    Start-Process -FilePath $currentExe
+    Write-Host "(If the app doesn't start automatically, please launch it manually)"
+    Start-Sleep -Seconds 3
+
+    # Use cmd /c start to launch in a completely new process tree
+    Start-Process cmd.exe -ArgumentList "/c", "start", '""', "`"$currentExe`"" -WindowStyle Hidden
 
     Write-Host ""
-    Write-Host "Update complete! This window will close automatically."
-    Start-Sleep -Seconds 2
+    Write-Host "Update complete! This window will close in 5 seconds..."
+    Write-Host "If POE2 Sentinel doesn't start, please launch it manually."
+    Start-Sleep -Seconds 5
 
 }} catch {{
     Write-Host ""

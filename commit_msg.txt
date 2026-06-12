@@ -1,5 +1,5 @@
-Release v1.0.5
+Fix auto-restart using cmd.exe to fully detach new process
 
-- Add "GitHub" button in Settings > About
-- Fix auto-restart timing (3 second delay after cleanup)
-- Clean up _MEI* temp folders more thoroughly
+- Use cmd /c start to launch new exe in completely separate process tree
+- Prevents Python DLL conflicts from inherited environment
+- Added helpful message if auto-launch fails
