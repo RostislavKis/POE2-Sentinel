@@ -1,4 +1,3 @@
-Add custom window icon to title bar
+Release v1.0.3
 
-- Window now shows the POE2-Sentinel-Icon.ico in title bar
-- Matches the exe icon instead of default blue square
+- Added custom window icon to title bar (matches exe icon)
