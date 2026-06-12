@@ -61,16 +61,22 @@ class CustomDialog:
         self._create_content()
         
         self.dialog.update_idletasks()
-        
-        # Size and position
-        width, height = 450, 220
+
+        # Auto-size based on content, with min/max bounds
+        width = 450
+        # Calculate height based on message length (rough estimate)
+        msg_lines = self.message.count('\n') + 1
+        base_height = 180  # Header + buttons
+        line_height = 18
+        height = min(500, max(220, base_height + msg_lines * line_height))
+
         if self.parent:
             x = self.parent.winfo_x() + (self.parent.winfo_width() // 2) - (width // 2)
             y = self.parent.winfo_y() + (self.parent.winfo_height() // 2) - (height // 2)
         else:
             x = (self.dialog.winfo_screenwidth() // 2) - (width // 2)
             y = (self.dialog.winfo_screenheight() // 2) - (height // 2)
-        
+
         self.dialog.geometry(f"{width}x{height}+{x}+{y}")
         self.dialog.resizable(False, False)
         self.dialog.transient(self.parent)

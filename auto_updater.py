@@ -161,6 +161,12 @@ def apply_update(new_exe_path: str) -> bool:
     updater_script = f'''
 # POE2 Sentinel Updater Script
 $ErrorActionPreference = "Stop"
+$Host.UI.RawUI.WindowTitle = "POE2 Sentinel Updater"
+
+Write-Host "================================"
+Write-Host "  POE2 Sentinel Auto-Updater"
+Write-Host "================================"
+Write-Host ""
 
 # Wait for the main process to exit
 $processId = {current_pid}
@@ -179,31 +185,50 @@ while ($elapsed -lt $timeout) {{
 
 if ($elapsed -ge $timeout) {{
     Write-Host "Timeout waiting for process to exit. Update cancelled."
+    pause
     exit 1
 }}
 
-Start-Sleep -Seconds 1
+# Wait a bit longer to ensure file handles are released
+Write-Host "Finalizing..."
+Start-Sleep -Seconds 2
 
 # Replace the exe
 $newExe = "{new_exe_path.replace(chr(92), chr(92)+chr(92))}"
 $currentExe = "{current_exe.replace(chr(92), chr(92)+chr(92))}"
 
-Write-Host "Updating $currentExe..."
+Write-Host "Installing update..."
 try {{
+    # Remove old exe first to ensure clean replacement
+    if (Test-Path $currentExe) {{
+        Remove-Item -Path $currentExe -Force
+    }}
+
+    # Copy new exe
     Copy-Item -Path $newExe -Destination $currentExe -Force
-    Write-Host "Update successful!"
+    Write-Host "Update installed successfully!"
 
     # Clean up temp file
     Remove-Item -Path $newExe -Force -ErrorAction SilentlyContinue
 
+    # Small delay before launching
+    Start-Sleep -Seconds 1
+
     # Launch new version
-    Write-Host "Launching updated version..."
+    Write-Host "Launching POE2 Sentinel..."
     Start-Process -FilePath $currentExe
 
+    Write-Host ""
+    Write-Host "Update complete! This window will close automatically."
+    Start-Sleep -Seconds 2
+
 }} catch {{
+    Write-Host ""
     Write-Host "Update failed: $_"
+    Write-Host ""
     Write-Host "The new version is saved at: $newExe"
     Write-Host "You can manually replace the exe."
+    Write-Host ""
     pause
     exit 1
 }}
@@ -214,11 +239,11 @@ try {{
     with open(script_path, 'w', encoding='utf-8') as f:
         f.write(updater_script)
 
-    # Launch PowerShell script (hidden window)
+    # Launch PowerShell script (visible window so user sees progress)
     try:
         subprocess.Popen(
-            ['powershell', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', script_path],
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+            ['powershell', '-ExecutionPolicy', 'Bypass', '-File', script_path],
+            creationflags=subprocess.CREATE_NEW_CONSOLE if sys.platform == 'win32' else 0
         )
         return True
     except Exception as e:
