@@ -109,11 +109,15 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+# Single-file exe (--onefile mode) for easy auto-updates
+# All dependencies bundled into one exe, extracts to temp at runtime
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
     [],
-    exclude_binaries=True,
     name="POE2Sentinel",
     debug=False,
     bootloader_ignore_signals=False,
@@ -127,15 +131,4 @@ exe = EXE(
     entitlements_file=None,
     icon=_icon,
     uac_admin=True,  # Memory reading + keyboard requires elevation
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    name="POE2Sentinel",
 )

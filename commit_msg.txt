@@ -1,5 +1,6 @@
-Add custom application icon
+Switch to single-file exe build for auto-updates
 
-- POE2-Sentinel-Icon.ico for exe and installer
-- Updated PyInstaller spec to use new icon
-- Updated Inno Setup to use icon for installer, shortcuts, and desktop icon
+- PyInstaller now builds a self-contained single exe (62MB)
+- No more _internal folder dependency
+- Auto-updater can now replace the exe in-place
+- Updated installer.iss to use new dist layout

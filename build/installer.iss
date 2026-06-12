@@ -36,9 +36,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-; Main executable and PyInstaller dependencies
-Source: "..\dist\POE2Sentinel\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\dist\POE2Sentinel\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Main executable (single-file build, no _internal folder needed)
+Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Tesseract OCR engine (bundled for OCR fallback mode)
 #ifexist SourcePath + "..\tesseract-portable\tesseract.exe"

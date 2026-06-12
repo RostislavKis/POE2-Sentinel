@@ -20,8 +20,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BUILD_DIR = Path(__file__).resolve().parent
 SPEC_FILE = BUILD_DIR / "POE2Sentinel.spec"
-DIST_APP = PROJECT_ROOT / "dist" / "POE2Sentinel"
-EXE_PATH = DIST_APP / "POE2Sentinel.exe"
+DIST_DIR = PROJECT_ROOT / "dist"
+EXE_PATH = DIST_DIR / "POE2Sentinel.exe"  # Single-file build outputs directly to dist/
 VERSION_FILE = PROJECT_ROOT / "version.py"
 
 
@@ -212,7 +212,7 @@ def main() -> int:
 
     header("Build complete")
     print(f"  Version:      {new_ver}")
-    print(f"  Portable app: {DIST_APP}")
+    print(f"  Portable exe: {EXE_PATH}")
     if installer_ok:
         print(f"  Installer:    dist/POE2Sentinel_Setup_v{new_ver}.exe")
     return 0
