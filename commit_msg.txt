@@ -1,5 +1,4 @@
-Fix auto-restart using cmd.exe to fully detach new process
+Release v1.0.6
 
-- Use cmd /c start to launch new exe in completely separate process tree
-- Prevents Python DLL conflicts from inherited environment
-- Added helpful message if auto-launch fails
+- Use cmd.exe to fully detach new process during auto-restart
+- Added fallback message if auto-launch fails
