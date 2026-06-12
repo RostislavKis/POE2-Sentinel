@@ -1,7 +1,7 @@
 """
-POE2 Auto Flask Bot - Memory-Based GUI Application
-Uses pointer chains to read HP/Mana directly from game memory.
-No OCR, no screen region picking needed!
+POE2 Sentinel - GUI Application
+Flask bot, terrain overlay, and map tools for Path of Exile 2.
+Uses structure-based memory reading that auto-updates across game patches.
 """
 
 import customtkinter as ctk
@@ -39,12 +39,12 @@ DEFAULT_HOTKEYS = {
 }
 
 
-class FlaskBotGUI:
-    """Modern GUI for POE2 Auto Flask Bot."""
+class SentinelGUI:
+    """Modern GUI for POE2 Sentinel."""
 
     def __init__(self):
         self.root = ctk.CTk()
-        self.root.title("⚗️ POE2 Tools")
+        self.root.title("🛡️ POE2 Sentinel")
         self.root.geometry("820x600")
         self.root.minsize(700, 500)
 
@@ -132,7 +132,7 @@ class FlaskBotGUI:
         # Logo + live connection status
         header = ctk.CTkFrame(sidebar, fg_color="transparent")
         header.grid(row=0, column=0, sticky="ew", padx=16, pady=(20, 16))
-        ctk.CTkLabel(header, text="POE2 TOOLS", font=("Segoe UI", 16, "bold"),
+        ctk.CTkLabel(header, text="POE2 SENTINEL", font=("Segoe UI", 16, "bold"),
                      text_color=self.colors["text"]).pack(anchor="w")
         status_row = ctk.CTkFrame(header, fg_color="transparent")
         status_row.pack(anchor="w", pady=(8, 0))
@@ -373,9 +373,9 @@ class FlaskBotGUI:
         # About
         about = self._make_card(tab)
         self._make_section_header(about, "About")
-        ctk.CTkLabel(about, text="POE2 Tools", font=("Segoe UI", 14, "bold"),
+        ctk.CTkLabel(about, text="POE2 Sentinel", font=("Segoe UI", 14, "bold"),
                      text_color=self.colors["text"]).pack(anchor="w", padx=16, pady=(0, 2))
-        ctk.CTkLabel(about, text="Memory-based flask bot, map reveal and overlay tools "
+        ctk.CTkLabel(about, text="Flask bot, terrain overlay, and map tools "
                                  "for Path of Exile 2.",
                      font=("Segoe UI", 11), text_color=self.colors["text_secondary"],
                      wraplength=420, justify="left").pack(anchor="w", padx=16, pady=(0, 10))
@@ -560,7 +560,7 @@ class FlaskBotGUI:
         overlay_key = self._hotkey_label(hotkeys.get("toggle_overlay", ""))
         show_info(
             self.root,
-            "POE2 Auto Flask Bot",
+            "POE2 Sentinel",
             "This bot can read HP/Mana/ES via Memory, Structure, or OCR.\n\n"
             "Detection Modes:\n"
             "• Structure: RECOMMENDED - Auto-updates across patches!\n"
@@ -1420,7 +1420,7 @@ class FlaskBotGUI:
 
 def main():
     """Main entry point."""
-    app = FlaskBotGUI()
+    app = SentinelGUI()
     app.run()
 
 

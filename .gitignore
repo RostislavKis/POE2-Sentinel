@@ -8,10 +8,10 @@ __pycache__/
 .eggs/
 *.egg
 
-# Build artifacts
-build/
+# Build artifacts (keep build scripts, ignore compiled output)
 dist/
-*.spec
+build/POE2Sentinel/
+build/POE2FlaskBot/
 
 # IDE
 .vscode/
