@@ -1,10 +1,6 @@
-Add auto-update feature
+Add version management and auto-bump for builds
 
-- New auto_updater.py module for GitHub Releases integration
-- Check for updates button in Settings → About
-- Auto-check on startup (configurable via auto_check_updates)
-- Download progress bar
-- In-place exe replacement via PowerShell script
-- Show version number in About section
-- Limit release notes to first 5 lines to avoid overwhelming users
-- Silent handling of 404 when no releases exist
+- New version.py as single source of truth for VERSION
+- build_exe.py now supports --bump [patch|minor|major] flag
+- auto_updater.py imports VERSION from version.py
+- Simplifies release workflow

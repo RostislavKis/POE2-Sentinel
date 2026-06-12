@@ -15,8 +15,9 @@ import urllib.error
 from typing import Optional, Callable, Tuple
 from dataclasses import dataclass
 
-# Version info
-VERSION = "1.0.0"
+from version import VERSION
+
+# GitHub info
 GITHUB_REPO = "Ace047/POE2-Sentinel"
 RELEASE_ASSET_NAME = "POE2Sentinel.exe"
 

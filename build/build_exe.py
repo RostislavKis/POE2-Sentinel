@@ -1,13 +1,20 @@
 """POE2 Sentinel - Build Script.
 
 Builds the executable with PyInstaller and creates an installer with Inno Setup.
-Run from anywhere: py build/build_exe.py
+
+Usage:
+    py build/build_exe.py                # Build with current version
+    py build/build_exe.py --bump patch   # Bump 1.0.0 → 1.0.1, then build
+    py build/build_exe.py --bump minor   # Bump 1.0.0 → 1.1.0, then build
+    py build/build_exe.py --bump major   # Bump 1.0.0 → 2.0.0, then build
 """
 
 import os
 import sys
+import re
 import shutil
 import subprocess
+import argparse
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -15,10 +22,50 @@ BUILD_DIR = Path(__file__).resolve().parent
 SPEC_FILE = BUILD_DIR / "POE2Sentinel.spec"
 DIST_APP = PROJECT_ROOT / "dist" / "POE2Sentinel"
 EXE_PATH = DIST_APP / "POE2Sentinel.exe"
+VERSION_FILE = PROJECT_ROOT / "version.py"
 
 
 def header(text: str) -> None:
     print("\n" + "=" * 70 + f"\n  {text}\n" + "=" * 70 + "\n")
+
+
+def get_current_version() -> str:
+    """Read current version from version.py."""
+    content = VERSION_FILE.read_text()
+    match = re.search(r'VERSION\s*=\s*["\']([^"\']+)["\']', content)
+    if match:
+        return match.group(1)
+    raise ValueError("Could not find VERSION in version.py")
+
+
+def set_version(new_version: str) -> None:
+    """Write new version to version.py."""
+    content = VERSION_FILE.read_text()
+    new_content = re.sub(
+        r'(VERSION\s*=\s*["\'])([^"\']+)(["\'])',
+        f'\\g<1>{new_version}\\g<3>',
+        content
+    )
+    VERSION_FILE.write_text(new_content)
+    print(f"[OK] Updated version.py: {new_version}")
+
+
+def bump_version(bump_type: str) -> str:
+    """Bump version and return new version string."""
+    current = get_current_version()
+    major, minor, patch = map(int, current.split('.'))
+
+    if bump_type == "major":
+        new_version = f"{major + 1}.0.0"
+    elif bump_type == "minor":
+        new_version = f"{major}.{minor + 1}.0"
+    elif bump_type == "patch":
+        new_version = f"{major}.{minor}.{patch + 1}"
+    else:
+        raise ValueError(f"Invalid bump type: {bump_type}")
+
+    set_version(new_version)
+    return new_version
 
 
 def ensure_pyinstaller() -> bool:
@@ -135,7 +182,25 @@ def build_installer() -> bool:
 
 
 def main() -> int:
-    header("POE2 Sentinel - Build")
+    parser = argparse.ArgumentParser(description="Build POE2 Sentinel")
+    parser.add_argument(
+        "--bump",
+        choices=["patch", "minor", "major"],
+        help="Bump version before building (patch: 1.0.0→1.0.1, minor: 1.0.0→1.1.0, major: 1.0.0→2.0.0)"
+    )
+    args = parser.parse_args()
+
+    # Get/bump version
+    if args.bump:
+        header(f"Bumping version ({args.bump})")
+        current = get_current_version()
+        new_ver = bump_version(args.bump)
+        print(f"  {current} → {new_ver}")
+    else:
+        new_ver = get_current_version()
+
+    header(f"POE2 Sentinel - Build v{new_ver}")
+
     if not install_dependencies():
         return 1
     if not ensure_pyinstaller():
@@ -146,9 +211,10 @@ def main() -> int:
     installer_ok = build_installer()
 
     header("Build complete")
+    print(f"  Version:      {new_ver}")
     print(f"  Portable app: {DIST_APP}")
     if installer_ok:
-        print("  Installer:    dist/POE2Sentinel_Setup_v*.exe")
+        print(f"  Installer:    dist/POE2Sentinel_Setup_v{new_ver}.exe")
     return 0
 
 
