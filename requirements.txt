@@ -1,0 +1,20 @@
+customtkinter>=5.2.0
+pymem>=1.13.0
+keyboard>=0.13.5
+pywin32>=306
+pygetwindow>=0.0.9
+
+# OCR fallback dependencies (optional but recommended)
+mss>=9.0.0
+pytesseract>=0.3.10
+Pillow>=10.0.0
+
+# Terrain Overlay dependencies
+PyQt5>=5.15.0
+
+# Shader Reveal dependency (.NET bridge for LibGGPK3 bundle patching)
+pythonnet>=3.0.0
+
+# Testing dependencies
+pytest>=7.0.0
+pytest-cov>=4.0.0

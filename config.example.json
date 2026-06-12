@@ -1,0 +1,57 @@
+{
+  "game_version": "steam",
+  "detection_mode": "structure",
+  "life": {
+    "threshold_mode": "percent",
+    "threshold_percent": 70.0,
+    "threshold_absolute": 500,
+    "flask_key": "1",
+    "confirmations_required": 2,
+    "cooldown": 2.0,
+    "pool_type": "hp",
+    "region": {
+      "top": 1089,
+      "left": 151,
+      "width": 119,
+      "height": 27
+    }
+  },
+  "mana": {
+    "threshold_mode": "percent",
+    "threshold_percent": 50.0,
+    "threshold_absolute": 300,
+    "flask_key": "2",
+    "confirmations_required": 2,
+    "cooldown": 2.0,
+    "region": {
+      "top": 1085,
+      "left": 2389,
+      "width": 99,
+      "height": 30
+    }
+  },
+  "poll_interval": 0.1,
+  "overlay": {
+    "interior_color": "#506482",
+    "edge_color": "#73A4C8",
+    "player_color": "#4DF2FF",
+    "interior_opacity": 0,
+    "edge_opacity": 54,
+    "player_opacity": 3,
+    "show_entities": true,
+    "show_npcs": false,
+    "show_chests": true,
+    "show_transitions": false,
+    "show_monsters": true,
+    "chest_color": "#FFFFFF",
+    "monster_unique_color": "#FF8000",
+    "monster_rare_color": "#FF9D6F",
+    "monster_magic_color": "#00ACFF",
+    "monster_normal_color": "#CE0B0B"
+  },
+  "hotkeys": {
+    "toggle_bot": "f9",
+    "toggle_overlay": "f10",
+    "toggle_atlas_fog": "f11"
+  }
+}
