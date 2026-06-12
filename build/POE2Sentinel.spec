@@ -39,8 +39,8 @@ for _pkg in ("pythonnet", "clr_loader"):
 _libggpk_dir = os.path.join(spec_root, "libggpk")
 added_files += [(f, "libggpk") for f in glob.glob(os.path.join(_libggpk_dir, "*"))]
 
-# Optional application icon
-_icon_path = os.path.join(spec_root, "assets", "flask.ico")
+# Application icon
+_icon_path = os.path.join(spec_root, "POE2-Sentinel-Icon.ico")
 _icon = _icon_path if os.path.isfile(_icon_path) else None
 
 hiddenimports = [

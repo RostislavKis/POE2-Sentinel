@@ -20,6 +20,8 @@ DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=..\dist
 OutputBaseFilename=POE2Sentinel_Setup_v{#MyAppVersion}
+SetupIconFile=..\POE2-Sentinel-Icon.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -46,11 +48,14 @@ Source: "..\tesseract-portable\*"; DestDir: "{app}\tesseract"; Flags: ignorevers
 ; Readme
 Source: "RELEASE_README.txt"; DestDir: "{app}"; DestName: "README.txt"; Flags: ignoreversion isreadme
 
+; Icon
+Source: "..\POE2-Sentinel-Icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\POE2-Sentinel-Icon.ico"
 Name: "{group}\README"; Filename: "{app}\README.txt"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\POE2-Sentinel-Icon.ico"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent

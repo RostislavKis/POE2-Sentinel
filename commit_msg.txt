@@ -1,6 +1,5 @@
-Add version management and auto-bump for builds
+Add custom application icon
 
-- New version.py as single source of truth for VERSION
-- build_exe.py now supports --bump [patch|minor|major] flag
-- auto_updater.py imports VERSION from version.py
-- Simplifies release workflow
+- POE2-Sentinel-Icon.ico for exe and installer
+- Updated PyInstaller spec to use new icon
+- Updated Inno Setup to use icon for installer, shortcuts, and desktop icon
