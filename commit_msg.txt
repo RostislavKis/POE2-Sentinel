@@ -1,4 +1,4 @@
-Release v1.0.7
+Fix window title and taskbar icon
 
-- Remove auto-restart after update (manual launch required)
-- Updater shows clear success message and waits for keypress
+- Remove shield emoji from window title
+- Fix taskbar icon to show custom icon instead of blue square
