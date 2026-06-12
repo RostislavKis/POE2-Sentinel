@@ -1,4 +1,5 @@
-Release v1.0.4
+Add GitHub button and fix auto-restart timing
 
-- Fix auto-updater Python DLL error (clean _MEI* temp folders)
-- Fix dialog text cutoff (scrollable textbox for long messages)
+- Add "GitHub" button in Settings > About to open repo
+- Increase delay after cleanup before restart (fixes DLL error on auto-restart)
+- Renamed buttons to fit all three in About section

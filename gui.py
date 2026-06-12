@@ -390,14 +390,20 @@ class SentinelGUI:
         ctk.CTkButton(
             about_btns, text="❓  Help", font=("Segoe UI", 11),
             fg_color=self.colors["bg_hover"], hover_color=self.colors["border"],
-            text_color=self.colors["text"], width=110, height=30, corner_radius=6,
+            text_color=self.colors["text"], width=100, height=30, corner_radius=6,
             command=self.show_help,
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
-            about_btns, text="🔄  Check for Updates", font=("Segoe UI", 11),
+            about_btns, text="🔄  Updates", font=("Segoe UI", 11),
             fg_color=self.colors["bg_hover"], hover_color=self.colors["border"],
-            text_color=self.colors["text"], width=160, height=30, corner_radius=6,
+            text_color=self.colors["text"], width=100, height=30, corner_radius=6,
             command=self.check_for_updates,
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            about_btns, text="⭐  GitHub", font=("Segoe UI", 11),
+            fg_color=self.colors["bg_hover"], hover_color=self.colors["border"],
+            text_color=self.colors["text"], width=100, height=30, corner_radius=6,
+            command=self.open_github,
         ).pack(side="left")
 
     def setup_hotkeys(self):
@@ -594,6 +600,11 @@ class SentinelGUI:
             "   Set pool_type in config for ES builds.",
             colors=self.colors
         )
+
+    def open_github(self):
+        """Open the GitHub repository in the default browser."""
+        import webbrowser
+        webbrowser.open("https://github.com/Ace047/POE2-Sentinel")
 
     def check_for_updates(self):
         """Check GitHub for updates."""

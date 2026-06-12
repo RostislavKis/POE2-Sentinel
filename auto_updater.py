@@ -196,16 +196,23 @@ Start-Sleep -Seconds 2
 # Clean up PyInstaller temp folders (_MEI*) to prevent DLL conflicts
 Write-Host "Cleaning up temporary files..."
 $tempPath = [System.IO.Path]::GetTempPath()
+$cleaned = 0
 Get-ChildItem -Path $tempPath -Directory -Filter "_MEI*" -ErrorAction SilentlyContinue | ForEach-Object {{
     try {{
         Remove-Item -Path $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
         Write-Host "  Cleaned: $($_.Name)"
+        $cleaned++
     }} catch {{
         # Ignore errors - folder might be in use by another app
     }}
 }}
+if ($cleaned -eq 0) {{
+    Write-Host "  No temp folders to clean"
+}}
 
-Start-Sleep -Seconds 1
+# Wait for filesystem to fully release handles
+Write-Host "Waiting for system to settle..."
+Start-Sleep -Seconds 3
 
 # Replace the exe
 $newExe = "{new_exe_path.replace(chr(92), chr(92)+chr(92))}"
