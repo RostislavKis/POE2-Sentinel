@@ -1,3 +1,5 @@
-Release v1.0.3
+Fix auto-updater DLL error and dialog text cutoff
 
-- Added custom window icon to title bar (matches exe icon)
+- Clean up PyInstaller _MEI* temp folders before launching new version
+- Use scrollable textbox for long dialog messages
+- Prevents "Failed to load Python DLL" error during updates

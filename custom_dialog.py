@@ -102,12 +102,25 @@ class CustomDialog:
         title_label = ctk.CTkLabel(header_frame, text=self.title, font=("Segoe UI", 16, "bold"), text_color=self.colors["text"])
         title_label.pack(side="left")
         
-        # Message
-        msg_label = ctk.CTkLabel(
-            main_frame, text=self.message, font=("Segoe UI", 12),
-            text_color=self.colors["text_secondary"], wraplength=400, justify="left"
-        )
-        msg_label.pack(fill="x", padx=20, pady=10)
+        # Message - use scrollable textbox for long messages
+        msg_lines = self.message.count('\n') + 1
+        if msg_lines > 6:
+            # Use scrollable textbox for long messages
+            msg_textbox = ctk.CTkTextbox(
+                main_frame, font=("Segoe UI", 12), fg_color="transparent",
+                text_color=self.colors["text_secondary"], wrap="word",
+                height=min(200, msg_lines * 18), activate_scrollbars=True
+            )
+            msg_textbox.insert("1.0", self.message)
+            msg_textbox.configure(state="disabled")  # Read-only
+            msg_textbox.pack(fill="both", expand=True, padx=20, pady=10)
+        else:
+            # Use simple label for short messages
+            msg_label = ctk.CTkLabel(
+                main_frame, text=self.message, font=("Segoe UI", 12),
+                text_color=self.colors["text_secondary"], wraplength=400, justify="left"
+            )
+            msg_label.pack(fill="x", padx=20, pady=10)
         
         # Buttons
         btn_frame = ctk.CTkFrame(main_frame, fg_color="transparent")

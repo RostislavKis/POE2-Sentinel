@@ -189,9 +189,23 @@ if ($elapsed -ge $timeout) {{
     exit 1
 }}
 
-# Wait a bit longer to ensure file handles are released
+# Wait for file handles to be released
 Write-Host "Finalizing..."
 Start-Sleep -Seconds 2
+
+# Clean up PyInstaller temp folders (_MEI*) to prevent DLL conflicts
+Write-Host "Cleaning up temporary files..."
+$tempPath = [System.IO.Path]::GetTempPath()
+Get-ChildItem -Path $tempPath -Directory -Filter "_MEI*" -ErrorAction SilentlyContinue | ForEach-Object {{
+    try {{
+        Remove-Item -Path $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "  Cleaned: $($_.Name)"
+    }} catch {{
+        # Ignore errors - folder might be in use by another app
+    }}
+}}
+
+Start-Sleep -Seconds 1
 
 # Replace the exe
 $newExe = "{new_exe_path.replace(chr(92), chr(92)+chr(92))}"
