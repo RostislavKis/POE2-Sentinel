@@ -1,6 +1,4 @@
-Switch to single-file exe build for auto-updates
+Fix installer launch elevation and sidebar alignment
 
-- PyInstaller now builds a self-contained single exe (62MB)
-- No more _internal folder dependency
-- Auto-updater can now replace the exe in-place
-- Updated installer.iss to use new dist layout
+- Installer now launches app with UAC elevation (shellexec flag)
+- Fixed Map Tools sidebar icon alignment (changed emoji)

@@ -150,7 +150,7 @@ class SentinelGUI:
         nav_items = [
             ("dashboard", "📊  Dashboard"),
             ("flask", "⚗️  Flask Bot"),
-            ("map", "🗺️  Map Tools"),
+            ("map", "🧭  Map Tools"),
             ("overlay", "🎨  Overlay"),
             ("settings", "⚙️  Settings"),
         ]
