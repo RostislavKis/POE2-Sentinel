@@ -50,7 +50,12 @@ class SentinelGUI:
         self.root.minsize(700, 500)
 
         # Set window icon (title bar and taskbar)
-        icon_path = os.path.join(os.path.dirname(__file__), "POE2-Sentinel-Icon.ico")
+        # In PyInstaller bundle, resources are extracted to sys._MEIPASS
+        if getattr(sys, 'frozen', False):
+            base_path = sys._MEIPASS
+        else:
+            base_path = os.path.dirname(__file__)
+        icon_path = os.path.join(base_path, "POE2-Sentinel-Icon.ico")
         if os.path.exists(icon_path):
             self.root.iconbitmap(icon_path)
             # Also set for taskbar on Windows

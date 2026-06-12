@@ -43,6 +43,10 @@ added_files += [(f, "libggpk") for f in glob.glob(os.path.join(_libggpk_dir, "*"
 _icon_path = os.path.join(spec_root, "POE2-Sentinel-Icon.ico")
 _icon = _icon_path if os.path.isfile(_icon_path) else None
 
+# Bundle icon file for runtime window icon loading
+if _icon:
+    added_files += [(_icon_path, ".")]
+
 hiddenimports = [
     "customtkinter",
     "PIL._tkinter_finder",

@@ -316,6 +316,7 @@ class StructureReader:
         # Cached addresses
         self._game_state_slot: Optional[int] = None
         self._life_component_cache: Optional[int] = None
+        self._cached_player_ptr: Optional[int] = None  # Track player ptr for zone change detection
 
         # Load custom offsets from config if provided
         self._load_offsets(config)
@@ -361,6 +362,7 @@ class StructureReader:
             self.connected = True
             self._game_state_slot = None  # Reset AOB cache on reconnect
             self._life_component_cache = None
+            self._cached_player_ptr = None  # Reset player cache
             logger.info(f"StructureReader connected to {process_name} at 0x{self.base_address:X}")
             return True
         except Exception as e:
@@ -608,6 +610,12 @@ class StructureReader:
                 logger.debug("Could not find local player")
                 return None
 
+            # Zone change detection: if player pointer changed, invalidate Life cache
+            if self._cached_player_ptr and self._cached_player_ptr != player:
+                logger.debug(f"Zone change detected (player ptr: 0x{self._cached_player_ptr:X} -> 0x{player:X})")
+                self._life_component_cache = None
+            self._cached_player_ptr = player
+
             # Resolve Life component (with caching)
             if self._life_component_cache:
                 life = self._life_component_cache
@@ -632,6 +640,7 @@ class StructureReader:
             # Sanity check
             if hp_max <= 0 or hp_max > 50000:
                 self._life_component_cache = None  # Invalidate cache
+                self._cached_player_ptr = None  # Also reset player cache
                 return None
 
             return {
@@ -645,6 +654,7 @@ class StructureReader:
         except Exception as e:
             logger.debug(f"StructureReader read failed: {e}")
             self._life_component_cache = None
+            self._cached_player_ptr = None
             return None
 
 
