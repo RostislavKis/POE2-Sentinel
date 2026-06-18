@@ -2,6 +2,8 @@
 
 A feature-rich companion tool for Path of Exile 2 with auto flask bot, terrain overlay, and map reveal features.
 
+> 🌐 Languages: **English** · [Русский](README.ru.md)
+
 ## Features
 
 - **Flask Bot** - Automatically uses flasks when HP/Mana drops below threshold
