@@ -22,6 +22,9 @@ build/POE2FlaskBot/
 # Config (contains personal settings)
 config.json
 
+# Claude Code local memory (personal, not committed)
+CLAUDE.local.md
+
 # Tesseract portable (users download separately)
 tesseract-portable/
 
