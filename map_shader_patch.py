@@ -20,6 +20,8 @@ reapplied. Use Steam "Verify integrity of game files" to fully revert.
 import logging
 import os
 import shutil
+import tempfile
+import threading
 from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -29,13 +31,17 @@ logger = logging.getLogger(__name__)
 # visibility (0 unexplored .. 1 explored). We floor it just before the
 # function returns so unexplored tiles stay faintly visible (layout + fog).
 VISIBILITY_FILE = "shaders/minimap_visibility_pixel.hlsl"
-BLENDING_FILE = "shaders/minimap_blending_pixel.hlsl"
 RETURN_ANCHOR = "return res_color;"
 FLOOR_MARKER = "res_color.r = max(res_color.r, "
 DEFAULT_THRESHOLD = 0.18
 
+# Win32 HResults for sharing/lock violations - locale-independent lock detection
+# (0x80070020 ERROR_SHARING_VIOLATION, 0x80070021 ERROR_LOCK_VIOLATION).
+_LOCK_HRESULTS = {-2147024864, -2147024863}
+
 _LIB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "libggpk")
 _clr_ready = False
+_clr_lock = threading.Lock()
 
 
 class ShaderPatchError(Exception):
@@ -54,21 +60,59 @@ class AnchorNotFoundError(ShaderPatchError):
     """Raised when the expected shader source anchor is missing."""
 
 
+def _clamp_threshold(threshold: float) -> float:
+    """Clamp the visibility floor to a finite value in [0.0, 1.0]."""
+    try:
+        value = float(threshold)
+    except (TypeError, ValueError):
+        raise ShaderPatchError(f"Invalid threshold: {threshold!r}")
+    if value != value or value in (float("inf"), float("-inf")):  # NaN / +-inf
+        raise ShaderPatchError(f"Invalid threshold: {threshold!r}")
+    return min(1.0, max(0.0, value))
+
+
+def _is_lock_error(exc) -> bool:
+    """True if a .NET exception indicates a file sharing/lock violation."""
+    if getattr(exc, "HResult", None) in _LOCK_HRESULTS:
+        return True
+    return "used by another process" in str(exc).lower()
+
+
+def _atomic_copy(src: str, dst: str) -> None:
+    """Copy ``src`` onto ``dst`` atomically (temp file in dst's dir, then replace)."""
+    dst_dir = os.path.dirname(dst) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".tmp_", dir=dst_dir)
+    os.close(fd)
+    try:
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dst)  # atomic rename on the same volume
+    except OSError:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def _ensure_clr() -> None:
-    """Load the .NET runtime and LibGGPK3 assemblies exactly once."""
+    """Load the .NET runtime and LibGGPK3 assemblies exactly once (thread-safe)."""
     global _clr_ready
     if _clr_ready:
         return
-    if not os.path.isdir(_LIB_DIR):
-        raise ShaderPatchError(f"Missing libggpk folder: {_LIB_DIR}")
-    os.add_dll_directory(_LIB_DIR)  # let .NET resolve native oo2core.dll
-    from pythonnet import load
-    load("coreclr")
-    import clr  # noqa: F401
-    for dll in ("SystemExtensions.dll", "LibBundle3.dll", "LibBundledGGPK3.dll"):
-        clr.AddReference(os.path.join(_LIB_DIR, dll))
-    _clr_ready = True
-    logger.debug("LibGGPK3 .NET assemblies loaded")
+    with _clr_lock:
+        if _clr_ready:
+            return
+        if not os.path.isdir(_LIB_DIR):
+            raise ShaderPatchError(f"Missing libggpk folder: {_LIB_DIR}")
+        os.add_dll_directory(_LIB_DIR)  # let .NET resolve native oo2core.dll
+        from pythonnet import load
+        load("coreclr")
+        import clr  # noqa: F401
+        for dll in ("SystemExtensions.dll", "LibBundle3.dll", "LibBundledGGPK3.dll"):
+            clr.AddReference(os.path.join(_LIB_DIR, dll))
+        _clr_ready = True
+        logger.debug("LibGGPK3 .NET assemblies loaded")
 
 
 # Path of the bundle index relative to a Steam library root.
@@ -187,7 +231,7 @@ def _open_index(index_path: str, attempts: int = 8, delay: float = 0.4):
             return index
         except Exception as exc:  # noqa: BLE001 - .NET IOException, etc.
             last_err = exc
-            if "being used by another process" not in str(exc):
+            if not _is_lock_error(exc):
                 raise
             if attempt < attempts - 1:
                 time.sleep(delay)
@@ -215,9 +259,12 @@ def _get_bundle(record) -> Tuple[object, Optional[str]]:
     from System import Array, Object
     br = record.BundleRecord
     method = next(
-        m for m in br.GetType().GetMethods()
-        if m.Name == "TryGetBundle" and len(m.GetParameters()) == 2
+        (m for m in br.GetType().GetMethods()
+         if m.Name == "TryGetBundle" and len(m.GetParameters()) == 2),
+        None,
     )
+    if method is None:
+        raise ShaderPatchError("LibBundle3 API changed: TryGetBundle(2-arg) not found")
     args = Array[Object]([None, None])
     ok = method.Invoke(br, args)
     if ok:
@@ -230,7 +277,7 @@ def _read_record_text(record) -> str:
     """Decode a shader FileRecord to ASCII text (raises on lock)."""
     bundle, err = _get_bundle(record)
     if bundle is None:
-        if err and "being used by another process" in err:
+        if err and "used by another process" in err.lower():
             raise GameRunningError(
                 "Bundle file is locked. Close Path of Exile 2 and retry."
             )
@@ -242,7 +289,9 @@ def _read_record_text(record) -> str:
         data = bytes(record.Read(bundle).ToArray())
     finally:
         bundle.Dispose()
-    return data.decode("ascii", errors="replace")
+    # latin-1 is a lossless byte<->char mapping, so the text round-trips exactly
+    # on write (the ASCII anchors/markers still match within it).
+    return data.decode("latin-1")
 
 
 def _build_visibility_patch(text: str, threshold: float) -> Optional[str]:
@@ -348,7 +397,7 @@ def _replace_record(index, new_text: str) -> None:
     fd, tmp = tempfile.mkstemp(suffix=".hlsl")
     try:
         with os.fdopen(fd, "wb") as f:
-            f.write(new_text.encode("ascii"))
+            f.write(new_text.encode("latin-1"))
         replaced = LibBundle3.Index.Replace(index, VISIBILITY_FILE, tmp, None, True)
     finally:
         os.unlink(tmp)
@@ -356,15 +405,16 @@ def _replace_record(index, new_text: str) -> None:
         raise ShaderPatchError("Replace reported 0 files written")
 
 
-def snapshot_pristine(index_path: str) -> Optional[str]:
+def snapshot_pristine(index_path: str) -> str:
     """Refresh the pristine ``.orig.bak`` snapshot from a vanilla index.
 
     Must only be called when the on-disk index is truly vanilla (shader
     unpatched and no custom bundle) so the snapshot stays valid for the
-    current game version. The index must be closed before calling.
+    current game version. The index must be closed before calling. The copy is
+    atomic so an interrupted run cannot leave a truncated backup.
     """
     backup = index_path + ".orig.bak"
-    shutil.copy2(index_path, backup)
+    _atomic_copy(index_path, backup)
     logger.info("Pristine index snapshot refreshed: %s", backup)
     return backup
 
@@ -427,7 +477,7 @@ def restore_pristine(index_path: str) -> bool:
             "No pristine backup (_.index.bin.orig.bak) to restore from. "
             "Use Steam 'Verify integrity of game files' to recover."
         )
-    shutil.copy2(backup, index_path)
+    _atomic_copy(backup, index_path)
     removed = _remove_custom_bundles(_custom_bundle_dir(index_path))
     logger.info("Restored pristine index%s", "" if removed
                 else " (WARNING: custom bundle deletion incomplete)")
@@ -448,6 +498,7 @@ def apply_patch(index_path: Optional[str] = None,
     Returns a result dict with keys: status (patched/already_patched),
     threshold, index_path.
     """
+    threshold = _clamp_threshold(threshold)
     _ensure_clr()
     path = _resolve_index(index_path)
 
