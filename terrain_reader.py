@@ -12,6 +12,7 @@ import pymem
 import pymem.process
 import struct
 import logging
+from collections import deque
 from typing import Optional, Tuple, List
 from dataclasses import dataclass
 
@@ -267,29 +268,6 @@ class AobScanner:
     GAME_STATES_DISP_OFFSET = 12  # rel32 starts at byte 12
     GAME_STATES_INSTR_LEN = 16    # full pattern length
 
-    # Offset from GameStates to InGameState pointer
-    # POE2 uses 0x88 according to UnknownCheats (d2k2)
-    # Some versions may use 0x70, 0x80, 0xB0 - try multiple
-    INGAME_STATE_OFFSET = 0x88
-    INGAME_STATE_OFFSETS_TO_TRY = [0x88, 0x70, 0x80, 0xB0]
-
-    # Legacy pattern (kept for fallback)
-    GAME_STATE_PATTERN = [
-        0x48, 0x39, 0x2D, None, None, None, None,  # cmp [rip+rel32], rbp
-        0x0F, 0x85, 0x16, 0x01, 0x00, 0x00          # jnz +0x116
-    ]
-    GAME_STATE_DISP_OFFSET = 3   # rel32 starts at byte 3
-    GAME_STATE_INSTR_LEN = 7     # cmp instruction is 7 bytes
-
-    # InGameState AOB pattern (may be outdated - using offset approach instead)
-    INGAME_STATE_PATTERN = [
-        0x8B, 0xC7, 0x48, 0x83, 0xC4, 0x40, 0x5F, 0xC3,
-        0x48, 0x8B, 0x05, None, None, None, None,
-        0x48, 0x89, 0x07, 0x48
-    ]
-    INGAME_STATE_DISP_OFFSET = 11  # rel32 at position 11 (after prefix)
-    INGAME_STATE_INSTR_LEN = 15    # instruction ends at position 15
-
     @staticmethod
     def find_pattern(data: bytes, pattern: List[Optional[int]]) -> List[int]:
         """Find all occurrences of pattern in data. None = wildcard."""
@@ -379,7 +357,7 @@ class TerrainReader:
         if self.pm:
             try:
                 self.pm.close_process()
-            except:
+            except Exception:
                 pass
         self.pm = None
         self.connected = False
@@ -398,7 +376,7 @@ class TerrainReader:
             return None
         try:
             return self.pm.read_longlong(address)
-        except:
+        except Exception:
             return None
 
     def _read_int(self, address: int) -> Optional[int]:
@@ -407,16 +385,7 @@ class TerrainReader:
             return None
         try:
             return self.pm.read_int(address)
-        except:
-            return None
-
-    def _read_long(self, address: int) -> Optional[int]:
-        """Read a 64-bit integer."""
-        if not self.pm or address == 0:
-            return None
-        try:
-            return self.pm.read_longlong(address)
-        except:
+        except Exception:
             return None
 
     def _read_bytes(self, address: int, size: int) -> Optional[bytes]:
@@ -425,7 +394,7 @@ class TerrainReader:
             return None
         try:
             return self.pm.read_bytes(address, size)
-        except:
+        except Exception:
             return None
 
     def _read_float(self, address: int) -> Optional[float]:
@@ -434,7 +403,7 @@ class TerrainReader:
             return None
         try:
             return self.pm.read_float(address)
-        except:
+        except Exception:
             return None
 
     def _read_std_vector(self, address: int) -> Optional[Tuple[int, int]]:
@@ -454,25 +423,6 @@ class TerrainReader:
             return None
         return (begin, size)
 
-    def _read_native_array(self, address: int) -> Optional[Tuple[int, int]]:
-        """Read NativeArray/Span-like structure. Returns (data_ptr, size_bytes).
-
-        Some POE2 structures use:
-        - offset 0x00: pointer to data
-        - offset 0x08: count (as long/int64)
-        """
-        data_ptr = self._read_ptr(address)
-        count = self._read_long(address + 8)
-
-        if data_ptr is None or count is None or data_ptr == 0:
-            return None
-
-        # Count should be reasonable
-        if count <= 0 or count > 100_000_000:
-            return None
-
-        return (data_ptr, count)
-
     def _scan_for_pattern(self, pattern: List[Optional[int]],
                           disp_offset: int, instr_len: int) -> Optional[int]:
         """Scan game memory for AOB pattern and resolve RIP-relative address."""
@@ -489,7 +439,7 @@ class TerrainReader:
 
                 try:
                     data = self.pm.read_bytes(chunk_base, read_size)
-                except:
+                except Exception:
                     continue
 
                 matches = AobScanner.find_pattern(data, pattern)
@@ -506,26 +456,6 @@ class TerrainReader:
         except Exception as e:
             logger.error(f"AOB scan error: {e}")
             return None
-
-    def find_game_state(self) -> Optional[int]:
-        """Find the GameState global slot via AOB pattern scan."""
-        if self._game_state_slot:
-            return self._game_state_slot
-
-        logger.info("Scanning for GameState AOB pattern...")
-        slot = self._scan_for_pattern(
-            AobScanner.GAME_STATE_PATTERN,
-            AobScanner.GAME_STATE_DISP_OFFSET,
-            AobScanner.GAME_STATE_INSTR_LEN
-        )
-
-        if slot:
-            self._game_state_slot = slot
-            logger.info(f"Found GameState slot at 0x{slot:X}")
-        else:
-            logger.warning("GameState AOB pattern not found")
-
-        return slot
 
     def find_ingame_state(self) -> Optional[int]:
         """Find the InGameState object address (RESOLVED FRESH EACH CALL).
@@ -628,16 +558,6 @@ class TerrainReader:
 
         # Entity caches will be invalidated by entity reader itself (checks area)
 
-    def check_zone_change(self) -> bool:
-        """Check if player changed zones. Returns True if zone changed.
-
-        DEPRECATED: Zone changes are now detected automatically in get_area_instance().
-        This method still works for explicit checking.
-        """
-        old_area = self._area_instance_addr
-        new_area = self.get_area_instance()  # This now detects zone change internally
-        return old_area is not None and new_area is not None and old_area != new_area
-
     def get_terrain_metadata(self) -> Optional[int]:
         """Get TerrainStruct address from AreaInstance.
 
@@ -688,11 +608,11 @@ class TerrainReader:
 
             if not first_ptr or first_ptr == 0:
                 logger.debug("GridWalkableData first pointer is null")
-                self.invalidate_cache()  # Invalidate cache on failure
+                self._terrain_addr = None  # Re-resolve next tick (zone still loading)
                 return None
             if not last_ptr or last_ptr == 0:
                 logger.debug("GridWalkableData last pointer is null")
-                self.invalidate_cache()
+                self._terrain_addr = None
                 return None
 
             # Read BytesPerRow (int at 0x130)
@@ -738,9 +658,7 @@ class TerrainReader:
             )
 
         except Exception as e:
-            logger.error(f"Error reading terrain: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Error reading terrain: %s", e)
             return None
 
     def get_player_position(self) -> Optional[Tuple[float, float, float]]:
@@ -755,7 +673,7 @@ class TerrainReader:
             return None
 
         # Get the Render component from the player's component list
-        render_comp = self._find_component(player_ptr, "Render")
+        render_comp = self._resolve_component(player_ptr, "Render")
         if not render_comp:
             return None
 
@@ -779,73 +697,6 @@ class TerrainReader:
         grid_x = x / Poe2Offsets.WORLD_TO_GRID_RATIO
         grid_y = y / Poe2Offsets.WORLD_TO_GRID_RATIO
         return (grid_x, grid_y)
-
-    def _find_component(self, entity: int, component_name: str) -> Optional[int]:
-        """Find a component by name from an entity's component list.
-
-        Uses the ComponentLookUp structure at EntityDetails+0x28.
-        """
-        # Get EntityDetails pointer
-        entity_details = self._read_ptr(entity + Poe2Offsets.Entity.ENTITY_DETAILS_PTR)
-        if not entity_details:
-            return None
-
-        # Get ComponentLookUp pointer
-        comp_lookup = self._read_ptr(entity_details + 0x28)  # EntityDetails.ComponentLookUpPtr
-        if not comp_lookup:
-            return None
-
-        # ComponentLookUp has a StdBucket at +0x28 containing {NamePtr, Index} pairs
-        # For simplicity, let's just iterate through the component list and check names
-
-        # Get ComponentList StdVector from Entity
-        comp_list_begin = self._read_ptr(entity + Poe2Offsets.Entity.COMPONENT_LIST)
-        comp_list_end = self._read_ptr(entity + Poe2Offsets.Entity.COMPONENT_LIST + 8)
-
-        if not comp_list_begin or not comp_list_end or comp_list_end <= comp_list_begin:
-            return None
-
-        num_components = (comp_list_end - comp_list_begin) // 8  # 8 bytes per pointer
-        if num_components > 100:  # Sanity check
-            return None
-
-        # The actual component lookup is complex - for now, let's try a simplified approach
-        # POE2Radar uses ComponentLookUp to map name -> index, then ComponentList[index]
-        # We'll iterate the StdBucket structure
-
-        bucket_begin = self._read_ptr(comp_lookup + 0x28)  # NameAndIndexBucket = StdVector.Begin
-        bucket_end = self._read_ptr(comp_lookup + 0x28 + 8)  # StdVector.End
-
-        if not bucket_begin or not bucket_end or bucket_end <= bucket_begin:
-            return None
-
-        entry_stride = 0x10  # {IntPtr NamePtr; int Index; int pad}
-        num_entries = (bucket_end - bucket_begin) // entry_stride
-
-        if num_entries > 100:  # Sanity check
-            return None
-
-        for i in range(num_entries):
-            entry_addr = bucket_begin + i * entry_stride
-            name_ptr = self._read_ptr(entry_addr)
-            index = self._read_int(entry_addr + 8)
-
-            if name_ptr and index is not None and index >= 0 and index < num_components:
-                # Read the component name (StdWString or raw C string)
-                # Usually it's a pointer to a StdWString or a simple string
-                name_bytes = self._read_bytes(name_ptr, 32)
-                if name_bytes:
-                    # Try to decode as ASCII first (component names are ASCII)
-                    try:
-                        name = name_bytes.split(b'\x00')[0].decode('ascii')
-                        if name == component_name:
-                            # Found it! Get the component pointer from ComponentList
-                            comp_ptr = self._read_ptr(comp_list_begin + index * 8)
-                            return comp_ptr
-                    except:
-                        pass
-
-        return None
 
     def get_map_state(self) -> Optional[Tuple[bool, float, float, float]]:
         """Read the map UI state (visibility, shiftX, shiftY, zoom).
@@ -927,10 +778,10 @@ class TerrainReader:
         """Walk UI tree and cache all MapUiElements found."""
         self._map_elements.clear()
         visited = set()
-        queue = [(ui_root, 0)]
+        queue = deque([(ui_root, 0)])
 
         while queue and len(visited) < 2000:
-            element, depth = queue.pop(0)
+            element, depth = queue.popleft()
             if element in visited or element < 0x10000:
                 continue
             visited.add(element)
@@ -980,64 +831,6 @@ class TerrainReader:
 
         return (is_visible, shift_x, shift_y, zoom)
 
-    def _find_visible_map_element(self, ui_root: int, max_depth: int = 8) -> Optional[Tuple[bool, float, float, float]]:
-        """Walk UI tree to find a visible map element."""
-        visited = set()
-        queue = [(ui_root, 0)]
-        map_elements = []
-        elements_checked = 0
-
-        while queue and len(visited) < 2000:  # Increase limit
-            element, depth = queue.pop(0)
-            if element in visited or element < 0x10000:
-                continue
-            visited.add(element)
-            elements_checked += 1
-
-            # Check if this is a MapUiElement (DefaultShift.Y == -20)
-            default_shift_y = self._read_float(element + Poe2Offsets.MapUiElement.DEFAULT_SHIFT + 4)
-            if default_shift_y is not None and abs(default_shift_y - (-20.0)) < 0.5:  # Slightly wider tolerance
-                # This is a MapUiElement!
-                zoom = self._read_float(element + Poe2Offsets.MapUiElement.ZOOM)
-                if zoom is not None and 0.1 < zoom < 10.0:  # Valid zoom range
-                    # Check visibility
-                    flags = self._read_int(element + Poe2Offsets.UiElement.FLAGS)
-                    is_visible = (flags is not None) and (flags & (1 << Poe2Offsets.UiElement.FLAG_VISIBLE_BIT)) != 0
-
-                    shift_x = self._read_float(element + Poe2Offsets.MapUiElement.SHIFT)
-                    shift_y = self._read_float(element + Poe2Offsets.MapUiElement.SHIFT + 4)
-
-                    if shift_x is not None and shift_y is not None:
-                        map_elements.append((element, is_visible, shift_x, shift_y, zoom, flags))
-                        flags_str = f"0x{flags:X}" if flags else "None"
-                        logger.debug(f"Found MapUiElement: 0x{element:X} visible={is_visible} zoom={zoom:.2f} flags={flags_str}")
-
-            # Continue traversing children
-            if depth < max_depth:
-                children_begin = self._read_ptr(element + Poe2Offsets.UiElement.CHILDREN)
-                children_end = self._read_ptr(element + Poe2Offsets.UiElement.CHILDREN + 8)
-                if children_begin and children_end and children_end > children_begin:
-                    num_children = (children_end - children_begin) // 8
-                    if num_children <= 200:  # Increase limit
-                        for i in range(num_children):
-                            child = self._read_ptr(children_begin + i * 8)
-                            if child and child > 0x10000:
-                                queue.append((child, depth + 1))
-
-        logger.debug(f"UI tree walk: checked {elements_checked} elements, found {len(map_elements)} map elements")
-
-        # Check all found map elements for visibility
-        for element, is_visible, shift_x, shift_y, zoom, flags in map_elements:
-            if is_visible:
-                return (True, shift_x, shift_y, zoom)
-
-        # No visible map element found, return hidden state with first element's params
-        if map_elements:
-            _, is_visible, shift_x, shift_y, zoom, _ = map_elements[0]
-            return (False, shift_x, shift_y, zoom)
-
-        return None
-
     def is_map_visible(self) -> bool:
         """Check if the in-game map (Tab overlay) is visible."""
         map_state = self.get_map_state()
@@ -1065,6 +858,8 @@ class TerrainReader:
         self._category_cache = {}
         self._meta_cache = {}
         self._rarity_cache = {}
+        self._chest_addr_cache = {}
+        self._minimap_cache = {}
 
     # ========================================================================
     # Entity Reading Methods (based on POE2Radar's Poe2Live.Entities())
@@ -1093,6 +888,8 @@ class TerrainReader:
             self._category_cache = {}
             self._meta_cache = {}
             self._rarity_cache = {}
+            self._chest_addr_cache = {}
+            self._minimap_cache = {}
             self._entity_id_map = {}  # Track entity IDs for recycled address detection
 
         entities = []
@@ -1112,10 +909,10 @@ class TerrainReader:
 
         # BFS traversal of std::map red-black tree
         visited = set()
-        queue = [root]
+        queue = deque([root])
 
         while queue and len(visited) < 200000:
-            node = queue.pop(0)
+            node = queue.popleft()
             if not node or node == head or node in visited:
                 continue
             visited.add(node)
@@ -1159,6 +956,8 @@ class TerrainReader:
                     self._category_cache.pop(entity_ptr, None)
                     self._meta_cache.pop(entity_ptr, None)
                     self._rarity_cache.pop(entity_ptr, None)
+                    self._chest_addr_cache.pop(entity_ptr, None)
+                    self._minimap_cache.pop(entity_ptr, None)
             self._entity_id_map[entity_ptr] = entity_id
 
             # Get entity world position (always read fresh for position updates)
@@ -1204,7 +1003,7 @@ class TerrainReader:
                 metadata=metadata,
                 hp_cur=hp_cur,
                 hp_max=hp_max,
-                is_poi=False,  # TODO: read MinimapIcon
+                is_poi=self._read_is_poi(entity_ptr),
                 reaction=reaction,
                 rarity=rarity,
                 is_opened=is_opened
@@ -1359,7 +1158,7 @@ class TerrainReader:
 
         try:
             return data.decode('utf-16-le').rstrip('\x00')
-        except:
+        except Exception:
             return ""
 
     def _read_entity_hp(self, entity_ptr: int) -> Tuple[int, int]:
@@ -1428,13 +1227,11 @@ class TerrainReader:
 
         As per Poe2Offsets.cs: Chest +0x168 is 0 while closed, non-zero once opened.
         """
-        # Cache key for chest component
-        cache_key = f"chest_{entity_ptr}"
-        if cache_key not in self._render_addr_cache:
+        if entity_ptr not in self._chest_addr_cache:
             chest = self._resolve_component(entity_ptr, "Chest")
-            self._render_addr_cache[cache_key] = chest
+            self._chest_addr_cache[entity_ptr] = chest
         else:
-            chest = self._render_addr_cache.get(cache_key)
+            chest = self._chest_addr_cache.get(entity_ptr)
 
         if not chest:
             return False
@@ -1444,6 +1241,14 @@ class TerrainReader:
             return False
 
         return data[0] != 0
+
+    def _read_is_poi(self, entity_ptr: int) -> bool:
+        """True if the entity has a MinimapIcon component (point of interest)."""
+        if entity_ptr in self._minimap_cache:
+            return self._minimap_cache[entity_ptr]
+        has_icon = self._resolve_component(entity_ptr, "MinimapIcon") is not None
+        self._minimap_cache[entity_ptr] = has_icon
+        return has_icon
 
     def _resolve_component(self, entity_ptr: int, component_name: str) -> Optional[int]:
         """Resolve a component address by name via EntityDetails -> ComponentLookUp."""
@@ -1504,103 +1309,5 @@ class TerrainReader:
             if null_idx >= 0:
                 data = data[:null_idx]
             return data.decode('utf-8', errors='ignore')
-        except:
+        except Exception:
             return ""
-
-
-# ============================================================================
-# Test function - run this to verify terrain reading works
-# ============================================================================
-def test_terrain_reader():
-    """Test terrain reading functionality."""
-    import time
-
-    logging.basicConfig(level=logging.DEBUG)
-
-    print("=" * 60)
-    print("POE2 Terrain Reader Test")
-    print("=" * 60)
-    print("\nMake sure POE2 is running and you're in a zone.\n")
-
-    reader = TerrainReader("steam")
-
-    print("Connecting to game...")
-    if not reader.connect():
-        print("ERROR: Could not connect to PathOfExileSteam.exe")
-        print("Make sure the game is running and you have admin rights.")
-        return
-
-    print(f"Connected! Base: 0x{reader.base_address:X}")
-
-    print("\nSearching for InGameState...")
-    igs = reader.find_ingame_state()
-    if igs:
-        print(f"Found InGameState at: 0x{igs:X}")
-    else:
-        print("Could not find InGameState - trying GameState pattern...")
-        gs = reader.find_game_state()
-        if gs:
-            print(f"Found GameState slot at: 0x{gs:X}")
-        else:
-            print("Could not find GameState either.")
-            print("\nThe AOB patterns might need updating for this game version.")
-            return
-
-    print("\nReading terrain data...")
-    terrain = reader.read_terrain()
-
-    if terrain:
-        print(f"\n✓ SUCCESS! Terrain data read:")
-        print(f"  Tiles: {terrain.tiles_x} x {terrain.tiles_y}")
-        print(f"  Grid: {terrain.width} x {terrain.height} cells")
-        print(f"  Bytes per row: {terrain.bytes_per_row}")
-        print(f"  Grid data size: {len(terrain.walkable_grid)} bytes")
-
-        # Count walkable cells (sample)
-        walkable = 0
-        blocked = 0
-        for y in range(0, terrain.height, 10):  # Sample every 10th row
-            for x in range(0, terrain.width, 10):
-                if terrain.is_walkable(x, y):
-                    walkable += 1
-                else:
-                    blocked += 1
-
-        print(f"  Sample walkability: {walkable} walkable, {blocked} blocked")
-    else:
-        print("ERROR: Could not read terrain data")
-
-    # Test player position
-    print("\nReading player position...")
-    player_grid = reader.get_player_grid_position()
-    if player_grid:
-        gx, gy = player_grid
-        print(f"✓ Player at grid ({gx:.1f}, {gy:.1f})")
-        if terrain:
-            # Check if player position is within terrain bounds
-            if 0 <= gx < terrain.width and 0 <= gy < terrain.height:
-                walkable = terrain.is_walkable(int(gx), int(gy))
-                print(f"  At grid position: {'walkable' if walkable else 'blocked'}")
-            else:
-                print(f"  WARNING: Player position outside terrain bounds")
-    else:
-        print("  Could not read player position (component lookup not implemented yet)")
-
-    # Test map visibility
-    print("\nChecking map visibility...")
-    print("Press Tab in-game to toggle the map, then check output.")
-    for i in range(5):
-        map_state = reader.get_map_state()
-        if map_state:
-            is_visible, shift_x, shift_y, zoom = map_state
-            print(f"  Map visible: {is_visible}, shift=({shift_x:.1f}, {shift_y:.1f}), zoom={zoom:.2f}")
-        else:
-            print("  Could not read map state")
-        time.sleep(1)
-
-    reader.disconnect()
-    print("\nDone!")
-
-
-if __name__ == "__main__":
-    test_terrain_reader()
