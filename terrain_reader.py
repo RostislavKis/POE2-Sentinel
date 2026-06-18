@@ -113,6 +113,11 @@ class EntityDot:
 class Poe2Offsets:
     """POE2 memory offsets - EXACT COPY from POE2Radar source code (Poe2Offsets.cs).
 
+    Last validated against game build 4.5.2/311743 (see game_config.LAST_VALIDATED_BUILD).
+    If PoE2 has been patched past this build, these offsets/AOB patterns may need
+    re-checking; the GUI surfaces a build-drift warning on startup.
+
+
     These are confirmed working in POE2Radar v0.5.1.
     Source: C:\\Users\\riven\\Downloads\\POE2 RADAR\\POE2 RADAR CODE\\POE2Radar\\src\\POE2Radar.Core\\Game\\Poe2Offsets.cs
 

@@ -332,8 +332,9 @@ class StructureReader:
     GAME_STATES_DISP_OFFSET = 12
     GAME_STATES_INSTR_LEN = 16
 
-    # Structure offsets - these are the only things that may change per patch
-    # Last validated: 2026-06-04
+    # Structure offsets - these are the only things that may change per patch.
+    # Last validated: 2026-06-04 against game build 4.5.2/311743
+    # (single source: game_config.LAST_VALIDATED_BUILD; the GUI warns on drift).
     class Offsets:
         # GameState
         CURRENT_STATE_PTR = 0x08
