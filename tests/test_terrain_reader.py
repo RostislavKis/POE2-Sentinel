@@ -199,13 +199,13 @@ class TestPoe2Offsets:
 
     def test_terrain_offsets_exist(self):
         """Test that terrain offsets are defined."""
-        assert Poe2Offsets.Terrain.GRID_WALKABLE == 0xD0
+        assert Poe2Offsets.Terrain.GRID_WALKABLE_DATA == 0xD0
         assert Poe2Offsets.Terrain.BYTES_PER_ROW == 0x130
         assert Poe2Offsets.Terrain.TOTAL_TILES == 0x18
 
     def test_ingamestate_offsets_exist(self):
         """Test that InGameState offsets are defined."""
-        assert Poe2Offsets.InGameState.AREA_INSTANCE == 0x290
+        assert Poe2Offsets.InGameState.AREA_INSTANCE_DATA == 0x290
         assert Poe2Offsets.InGameState.CAMERA == 0x368
 
 

@@ -23,41 +23,39 @@ class TestOverlayConfig:
     def test_default_values(self):
         """Test default configuration values."""
         config = OverlayConfig()
-        
-        assert config.cell_size == 2
-        assert config.update_interval == 100
-        assert config.show_border == True
-        assert config.show_player == True
-        assert config.width == 300
-        assert config.height == 300
-    
+
+        assert config.update_interval == 16
+        assert config.show_player is True
+        assert config.show_terrain is True
+        assert config.width == 1920
+        assert config.height == 1080
+
     def test_custom_values(self):
         """Test custom configuration values."""
         config = OverlayConfig(
-            cell_size=4,
+            monster_size=8,
             width=500,
             height=400,
-            show_border=False
+            show_player=False,
         )
-        
-        assert config.cell_size == 4
+
+        assert config.monster_size == 8
         assert config.width == 500
         assert config.height == 400
-        assert config.show_border == False
-    
+        assert config.show_player is False
+
     def test_color_defaults(self):
         """Test default color values are RGBA tuples."""
         config = OverlayConfig()
-        
-        assert len(config.walkable_color) == 4
-        assert len(config.blocked_color) == 4
+
+        assert len(config.interior_color) == 4
+        assert len(config.edge_color) == 4
         assert len(config.player_color) == 4
-        assert len(config.border_color) == 4
-        
-        # Check walkable is greenish
-        assert config.walkable_color[1] == 255  # Green component
-        # Check blocked is reddish
-        assert config.blocked_color[0] == 255  # Red component
+        assert len(config.monster_normal_color) == 4
+
+        # Player marker is fully opaque; normal monsters are red.
+        assert config.player_color[3] == 255
+        assert config.monster_normal_color[0] == 255
 
 
 class TestCoordinateTransformer:
