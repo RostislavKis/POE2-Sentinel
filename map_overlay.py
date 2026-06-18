@@ -6,17 +6,18 @@ Draws terrain grid on top of the game window.
 """
 
 import sys
+import time
+import queue
+import struct
 import logging
-import ctypes
 from typing import Optional, Tuple, List
 from dataclasses import dataclass
-import struct
 
 # PyQt5 imports
 try:
-    from PyQt5.QtWidgets import QApplication, QWidget, QMainWindow, QDesktopWidget
-    from PyQt5.QtCore import Qt, QTimer, QPoint, QRect
-    from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont, QImage
+    from PyQt5.QtWidgets import QApplication, QWidget, QDesktopWidget
+    from PyQt5.QtCore import Qt, QTimer, QPoint
+    from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QImage
     PYQT5_AVAILABLE = True
 except ImportError:
     PYQT5_AVAILABLE = False
@@ -28,7 +29,6 @@ except ImportError:
 try:
     import win32gui
     import win32con
-    import win32api
     WIN32_AVAILABLE = True
 except ImportError:
     WIN32_AVAILABLE = False
@@ -38,21 +38,17 @@ from terrain_reader import TerrainReader, TerrainData, Poe2Offsets, EntityDot, E
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class CameraData:
-    """Camera transformation data."""
-    matrix: List[float]  # 4x4 matrix (16 floats)
-    zoom: float
-
-
 def hex_to_rgba(hex_color: str, alpha: int = 255) -> Tuple[int, int, int, int]:
-    """Convert hex color string to RGBA tuple."""
-    hex_color = hex_color.lstrip('#')
-    if len(hex_color) == 6:
-        r = int(hex_color[0:2], 16)
-        g = int(hex_color[2:4], 16)
-        b = int(hex_color[4:6], 16)
-        return (r, g, b, alpha)
+    """Convert a #RRGGBB string to an RGBA tuple (falls back on malformed input)."""
+    cleaned = (hex_color or "").lstrip('#')
+    if len(cleaned) == 6:
+        try:
+            r = int(cleaned[0:2], 16)
+            g = int(cleaned[2:4], 16)
+            b = int(cleaned[4:6], 16)
+            return (r, g, b, alpha)
+        except ValueError:
+            pass
     return (0x50, 0x64, 0x82, alpha)  # Default fallback
 
 
@@ -189,61 +185,6 @@ class OverlayConfig:
     # Window size (used by multiprocessing startup)
     width: int = 1920
     height: int = 1080
-
-    @classmethod
-    def from_config_dict(cls, config_dict: dict) -> 'OverlayConfig':
-        """Create OverlayConfig from a config dictionary (loaded from JSON)."""
-        overlay_cfg = config_dict.get("overlay", {})
-
-        interior_hex = overlay_cfg.get("interior_color", "#506482")
-        edge_hex = overlay_cfg.get("edge_color", "#3CDCFF")
-        player_hex = overlay_cfg.get("player_color", "#4DF2FF")
-
-        # Entity colors from config
-        monster_normal_hex = overlay_cfg.get("monster_normal_color", "#FF0000")
-        monster_magic_hex = overlay_cfg.get("monster_magic_color", "#0000FF")
-        monster_rare_hex = overlay_cfg.get("monster_rare_color", "#FFFF00")
-        monster_unique_hex = overlay_cfg.get("monster_unique_color", "#FFA500")
-        npc_hex = overlay_cfg.get("npc_color", "#00FF00")
-        chest_hex = overlay_cfg.get("chest_color", "#FFD700")
-        transition_hex = overlay_cfg.get("transition_color", "#00FFFF")
-
-        # Entity visibility flags
-        show_entities = overlay_cfg.get("show_entities", True)
-        show_monsters = overlay_cfg.get("show_monsters", True)
-        show_npcs = overlay_cfg.get("show_npcs", True)
-        show_chests = overlay_cfg.get("show_chests", True)
-        show_transitions = overlay_cfg.get("show_transitions", True)
-        show_friendly = overlay_cfg.get("show_friendly", False)
-
-        # Monster rarity filters
-        show_normal_monsters = overlay_cfg.get("show_normal_monsters", True)
-        show_magic_monsters = overlay_cfg.get("show_magic_monsters", True)
-        show_rare_monsters = overlay_cfg.get("show_rare_monsters", True)
-        show_unique_monsters = overlay_cfg.get("show_unique_monsters", True)
-
-        return cls(
-            interior_color=hex_to_rgba(interior_hex, alpha=30),
-            edge_color=hex_to_rgba(edge_hex, alpha=180),
-            player_color=hex_to_rgba(player_hex, alpha=255),
-            monster_normal_color=hex_to_rgba(monster_normal_hex, alpha=200),
-            monster_magic_color=hex_to_rgba(monster_magic_hex, alpha=220),
-            monster_rare_color=hex_to_rgba(monster_rare_hex, alpha=220),
-            monster_unique_color=hex_to_rgba(monster_unique_hex, alpha=255),
-            npc_color=hex_to_rgba(npc_hex, alpha=200),
-            chest_color=hex_to_rgba(chest_hex, alpha=200),
-            transition_color=hex_to_rgba(transition_hex, alpha=200),
-            show_entities=show_entities,
-            show_monsters=show_monsters,
-            show_npcs=show_npcs,
-            show_chests=show_chests,
-            show_transitions=show_transitions,
-            show_friendly=show_friendly,
-            show_normal_monsters=show_normal_monsters,
-            show_magic_monsters=show_magic_monsters,
-            show_rare_monsters=show_rare_monsters,
-            show_unique_monsters=show_unique_monsters,
-        )
 
 
 class CoordinateTransformer:
@@ -385,9 +326,6 @@ if PYQT5_AVAILABLE:
 
         def _build_terrain_image(self, terrain: TerrainData) -> QImage:
             """Build RGBA image of the terrain bitmap."""
-            import time
-            t0 = time.time()
-
             w, h = terrain.width, terrain.height
 
             # Create image with alpha channel
@@ -406,9 +344,6 @@ if PYQT5_AVAILABLE:
                         else:
                             image.setPixelColor(x, y, interior_color)
                     # Blocked cells stay transparent
-
-            t1 = time.time()
-            print(f"[TERRAIN] Built image {w}x{h} in {(t1-t0)*1000:.0f}ms")
 
             return image
 
@@ -521,7 +456,6 @@ if PYQT5_AVAILABLE:
 
             self.reader = terrain_reader
             self.config = config or OverlayConfig()
-            self.transformer = CoordinateTransformer(terrain_reader)
             self.renderer = TerrainRenderer(self.config)
 
             self._terrain: Optional[TerrainData] = None
@@ -538,13 +472,13 @@ if PYQT5_AVAILABLE:
             self._paint_dirty: bool = False      # A visible change awaits painting
             self._last_paint_time: float = 0.0   # perf_counter of last actual repaint
             self._entities: List[EntityDot] = []  # Entity list for radar
+            self._hotkey_handles: list = []       # Calibration hotkeys (only while shown)
 
             # Pre-load data immediately so overlay shows instantly
             self._preload_data()
 
             self._setup_window()
             self._setup_timer()
-            self._setup_hotkeys()
 
         def _preload_data(self):
             """Pre-load terrain and player position for instant display."""
@@ -682,12 +616,12 @@ if PYQT5_AVAILABLE:
                 # Nothing renderable is enabled — drop any stale dots.
                 self._entities = []
 
-            # Slow path: update terrain and window every 30th frame (~2 Hz at 60 FPS)
-            # BUT: read terrain immediately if we don't have any (new area or startup)
-            need_terrain_now = self._terrain is None
-            if self._world_update_counter >= 30 or need_terrain_now:
-                if not need_terrain_now:
-                    self._world_update_counter = 0
+            # Slow path: refresh terrain + window position periodically. Poll
+            # faster while we have no terrain yet (startup / zone load), but never
+            # every frame, so a missing terrain can't pin this loop at 60 Hz.
+            slow_interval = 6 if self._terrain is None else 30
+            if self._world_update_counter >= slow_interval:
+                self._world_update_counter = 0
 
                 # Update game window position
                 self._game_rect = find_game_window()
@@ -746,12 +680,15 @@ if PYQT5_AVAILABLE:
                 round(pos[0], 2), round(pos[1], 2),
             )
             if self.config.show_entities and self._entities:
-                # Movement-sensitive fingerprint of the rendered dots.
-                sx = sy = 0
+                # Per-entity fingerprint: position AND identity/state, so counter-
+                # movement, a kill-in-place, or a chest opening all force a repaint.
+                acc = 0
                 for e in self._entities:
-                    sx += int(e.grid_x)
-                    sy += int(e.grid_y)
-                sig += (len(self._entities), sx, sy)
+                    acc = (acc * 1000003 + hash((
+                        int(e.grid_x), int(e.grid_y), int(e.category),
+                        int(e.rarity), e.is_alive, e.is_opened,
+                    ))) & 0xFFFFFFFFFFFF
+                sig += (len(self._entities), acc)
             return sig
 
         def _maybe_repaint(self):
@@ -762,7 +699,6 @@ if PYQT5_AVAILABLE:
             no repaint) and a moving frame is capped to limit how much GPU we
             take from the game. A throttled change is flushed on a later tick.
             """
-            import time
             sig = self._frame_signature()
             if sig != self._last_paint_sig:
                 self._last_paint_sig = sig
@@ -816,42 +752,62 @@ if PYQT5_AVAILABLE:
                     self._render_entities(painter, center_x, center_y, scale)
 
         def _setup_hotkeys(self):
-            """Setup global hotkeys for calibration (POE2Radar style)."""
+            """Register global calibration hotkeys (only while the overlay is shown)."""
+            if self._hotkey_handles:
+                return  # already registered
             try:
                 import keyboard
-
-                # Scale: Numpad + / - (key names vary by system, try common ones)
-                keyboard.add_hotkey('+', lambda: self._adjust_scale(1.1))
-                keyboard.add_hotkey('-', lambda: self._adjust_scale(0.9))
-                # Alternative: use page up/down
-                keyboard.add_hotkey('page up', lambda: self._adjust_scale(1.1))
-                keyboard.add_hotkey('page down', lambda: self._adjust_scale(0.9))
-                # Offset: Arrow keys with ctrl
-                keyboard.add_hotkey('ctrl+up', lambda: self._adjust_offset(0, -10))
-                keyboard.add_hotkey('ctrl+down', lambda: self._adjust_offset(0, 10))
-                keyboard.add_hotkey('ctrl+left', lambda: self._adjust_offset(-10, 0))
-                keyboard.add_hotkey('ctrl+right', lambda: self._adjust_offset(10, 0))
-                # Reset: Home
-                keyboard.add_hotkey('home', self._reset_calibration)
-
-                print("Hotkeys: PageUp/Down or +/- = scale, Ctrl+Arrows = offset, Home = reset")
             except ImportError:
-                print("Note: Install 'keyboard' package for calibration hotkeys")
+                logger.info("Install 'keyboard' for overlay calibration hotkeys")
+                return
+            specs = [
+                ('+', lambda: self._adjust_scale(1.1)),
+                ('-', lambda: self._adjust_scale(0.9)),
+                ('page up', lambda: self._adjust_scale(1.1)),
+                ('page down', lambda: self._adjust_scale(0.9)),
+                ('ctrl+up', lambda: self._adjust_offset(0, -10)),
+                ('ctrl+down', lambda: self._adjust_offset(0, 10)),
+                ('ctrl+left', lambda: self._adjust_offset(-10, 0)),
+                ('ctrl+right', lambda: self._adjust_offset(10, 0)),
+                ('home', self._reset_calibration),
+            ]
+            for key, fn in specs:
+                try:
+                    self._hotkey_handles.append(keyboard.add_hotkey(key, fn))
+                except Exception as e:
+                    logger.debug("Could not bind overlay hotkey %s: %s", key, e)
+            logger.debug("Overlay calibration hotkeys registered")
+
+        def _remove_hotkeys(self):
+            """Unregister the global calibration hotkeys (on hide / quit)."""
+            if not self._hotkey_handles:
+                return
+            try:
+                import keyboard
+            except ImportError:
+                self._hotkey_handles = []
+                return
+            for handle in self._hotkey_handles:
+                try:
+                    keyboard.remove_hotkey(handle)
+                except (KeyError, ValueError):
+                    pass
+            self._hotkey_handles = []
 
         def _adjust_scale(self, factor: float):
             self.config.scale_mul *= factor
-            print(f"Scale: {self.config.scale_mul:.2f}")
+            logger.debug("Overlay scale: %.2f", self.config.scale_mul)
 
         def _adjust_offset(self, dx: float, dy: float):
             self.config.offset_x += dx
             self.config.offset_y += dy
-            print(f"Offset: ({self.config.offset_x:.0f}, {self.config.offset_y:.0f})")
+            logger.debug("Overlay offset: (%.0f, %.0f)", self.config.offset_x, self.config.offset_y)
 
         def _reset_calibration(self):
             self.config.scale_mul = 1.0
             self.config.offset_x = 0.0
             self.config.offset_y = 0.0
-            print("Reset to defaults")
+            logger.debug("Overlay calibration reset")
 
         def _render_entities(self, painter: 'QPainter', center_x: float, center_y: float, scale: float):
             """Render entity dots on the map."""
@@ -968,29 +924,6 @@ if PYQT5_AVAILABLE:
 
             return color, size
 
-        def _draw_star(self, painter: 'QPainter', cx: float, cy: float, size: float):
-            """Draw a simple 4-point star marker (outline only)."""
-            # Vertical line
-            painter.drawLine(int(cx), int(cy - size), int(cx), int(cy + size))
-            # Horizontal line
-            painter.drawLine(int(cx - size), int(cy), int(cx + size), int(cy))
-            # Diagonal lines
-            d = size * 0.7
-            painter.drawLine(int(cx - d), int(cy - d), int(cx + d), int(cy + d))
-            painter.drawLine(int(cx + d), int(cy - d), int(cx - d), int(cy + d))
-
-        def _draw_diamond(self, painter: 'QPainter', cx: float, cy: float, size: float):
-            """Draw a diamond shape marker (outline only)."""
-            from PyQt5.QtGui import QPolygon
-            from PyQt5.QtCore import QPoint
-            points = QPolygon([
-                QPoint(int(cx), int(cy - size)),
-                QPoint(int(cx + size), int(cy)),
-                QPoint(int(cx), int(cy + size)),
-                QPoint(int(cx - size), int(cy))
-            ])
-            painter.drawPolygon(points)
-
         def _draw_filled_diamond(self, painter: 'QPainter', cx: float, cy: float, size: float, color: 'QColor'):
             """Draw a filled diamond shape for Rare monsters."""
             from PyQt5.QtGui import QPolygon, QPen, QBrush
@@ -1081,6 +1014,7 @@ class MapOverlayManager:
             self._process = None
             self._process_started = False
             self._visible = False
+            self._close_queue()  # release the dead process's queue/feeder thread
 
         if self._process_started:
             return True
@@ -1088,7 +1022,8 @@ class MapOverlayManager:
         try:
             import multiprocessing
 
-            # Create command queue for IPC
+            # Create a fresh command queue for IPC
+            self._close_queue()
             self._command_queue = multiprocessing.Queue()
 
             # Start overlay in separate process (stays running)
@@ -1108,25 +1043,14 @@ class MapOverlayManager:
             return False
 
     def start(self) -> bool:
-        """Show the overlay (starts process if needed)."""
-        import time
-        t0 = time.time()
-
+        """Show the overlay (starts the process if needed)."""
         if not self._ensure_process_running():
             return False
-
-        t1 = time.time()
-        logger.info(f"Process ensure took {(t1-t0)*1000:.0f}ms")
-
         if self._visible:
             return True
-
-        # Send show command
         try:
             self._command_queue.put(('show', None))
             self._visible = True
-            t2 = time.time()
-            logger.info(f"Show command sent in {(t2-t1)*1000:.0f}ms, total {(t2-t0)*1000:.0f}ms")
             return True
         except Exception as e:
             logger.error(f"Failed to show overlay: {e}")
@@ -1142,18 +1066,31 @@ class MapOverlayManager:
         self._visible = False
         logger.info("Overlay hidden")
 
+    def _close_queue(self) -> None:
+        """Close the IPC queue and join its feeder thread (avoid orphaned threads)."""
+        if self._command_queue is not None:
+            try:
+                self._command_queue.close()
+                self._command_queue.join_thread()
+            except Exception:
+                pass
+            self._command_queue = None
+
     def shutdown(self):
-        """Fully terminate the overlay process."""
+        """Fully terminate the overlay process and release its IPC queue."""
         if self._command_queue:
             try:
                 self._command_queue.put(('quit', None))
             except Exception:
                 pass
-        if self._process and self._process.is_alive():
-            self._process.terminate()
+        if self._process:
+            # Give the process a chance to quit gracefully, then force it.
             self._process.join(timeout=2)
+            if self._process.is_alive():
+                self._process.terminate()
+                self._process.join(timeout=2)
+        self._close_queue()
         self._process = None
-        self._command_queue = None
         self._process_started = False
         self._visible = False
         logger.info("Overlay process terminated")
@@ -1188,48 +1125,50 @@ def _run_persistent_overlay(game_version: str, config_dict: dict, command_queue)
     app = QApplication(sys.argv)
 
     reader = TerrainReader(game_version)
+    # The game may not be running yet (the overlay can be pre-spawned at launch).
+    # Don't abort: read_terrain() reconnects lazily once the game appears.
     if not reader.connect():
-        print("ERROR: Could not connect to game process")
-        return
+        logger.info("Overlay: game not running yet; will connect when it appears")
 
     # Build config from dict (includes all entity visibility settings)
     config = OverlayConfig.from_dict(config_dict)
 
     overlay = OverlayWindow(reader, config)
 
-    # Start HIDDEN but with update timer running (so it stays connected)
-    # This allows pre-spawning: process starts, connects to game, and waits
-    # When user toggles ON, we just call show() - instant!
+    # Start HIDDEN but with the update timer running so it stays connected; when
+    # the user toggles ON we just show() it (no spawn cost).
     overlay.hide()
-    overlay.setVisible(False)  # Explicitly ensure hidden
-    # Keep update timer running at reduced rate while hidden (just to stay connected)
+    overlay.setVisible(False)
     overlay.update_timer.start(100)  # 10 Hz while hidden
-    print("[OVERLAY PROCESS] Started hidden, waiting for show command...")
+    logger.debug("Overlay process started hidden, waiting for show command")
 
     def check_commands():
-        """Poll command queue for show/hide/config/quit commands."""
-        try:
-            while not command_queue.empty():
+        """Poll the command queue for show/hide/config/quit commands."""
+        while True:
+            try:
                 cmd, data = command_queue.get_nowait()
-
+            except queue.Empty:
+                return
+            except Exception:
+                logger.exception("Overlay command read failed")
+                return
+            try:
                 if cmd == 'show':
-                    print(f"[OVERLAY] Show command received. Terrain={overlay._terrain is not None}, Player={overlay._player_grid_pos}")
                     overlay.show()
-                    # Switch to full speed when visible
+                    overlay._setup_hotkeys()  # calibration keys only while shown
                     overlay.update_timer.start(overlay.config.update_interval)
                 elif cmd == 'hide':
+                    overlay._remove_hotkeys()
                     overlay.hide()
-                    # Reduce to lower rate when hidden
-                    overlay.update_timer.start(100)
+                    overlay.update_timer.start(100)  # reduced rate while hidden
                 elif cmd == 'config':
-                    # Update config and apply
-                    new_config = OverlayConfig.from_dict(data)
-                    overlay.config = new_config
+                    overlay.config = OverlayConfig.from_dict(data)
                 elif cmd == 'quit':
+                    overlay._remove_hotkeys()
                     app.quit()
                     return
-        except Exception:
-            pass
+            except Exception:
+                logger.exception("Overlay command '%s' failed", cmd)
 
     # Check for commands every 50ms
     cmd_timer = QTimer()
@@ -1237,47 +1176,3 @@ def _run_persistent_overlay(game_version: str, config_dict: dict, command_queue)
     cmd_timer.start(50)
 
     sys.exit(app.exec_())
-
-
-# ============================================================================
-# Test / Demo
-# ============================================================================
-def test_overlay():
-    """Test the overlay with game connection."""
-    if not PYQT5_AVAILABLE:
-        print("PyQt5 not installed. Run: pip install PyQt5")
-        return
-
-    print("=" * 60)
-    print("POE2 Terrain Overlay")
-    print("=" * 60)
-    print("\nConnecting to POE2...")
-
-    app = QApplication(sys.argv)
-
-    # Create terrain reader and connect to game
-    reader = TerrainReader("steam")
-    if not reader.connect():
-        print("ERROR: Could not connect to PathOfExileSteam.exe")
-        print("Make sure the game is running.")
-        return
-
-    print(f"Connected! Base: 0x{reader.base_address:X}")
-
-    # Create overlay with default config
-    config = OverlayConfig()
-
-    overlay = OverlayWindow(reader, config)
-    overlay.show()
-
-    print("Overlay started. Close the window or press Ctrl+C to exit.")
-
-    sys.exit(app.exec_())
-
-
-if __name__ == "__main__":
-    # Required for multiprocessing on Windows
-    import multiprocessing
-    multiprocessing.freeze_support()
-
-    test_overlay()
