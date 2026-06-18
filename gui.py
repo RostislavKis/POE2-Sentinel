@@ -20,6 +20,8 @@ from toast_notification import ToastNotification
 from coordinate_picker import pick_region
 from terrain_reader import TerrainReader
 from auto_updater import VERSION, check_for_updates, download_update, apply_update
+import game_config
+import build_guide
 import keyboard
 
 # Try to import overlay (requires PyQt5)
@@ -37,7 +39,7 @@ logger = logging.getLogger("poe2sentinel.gui")
 
 # Default global hotkeys (rebindable from Settings → Hotkeys, persisted to config).
 DEFAULT_HOTKEYS = {
-    "toggle_bot": "f8",
+    "toggle_bot": "f7",   # F8 collides with PoE2's in-game screenshot bind
     "toggle_overlay": "f11",
     "toggle_atlas_fog": "f10",
 }
@@ -116,6 +118,7 @@ class SentinelGUI:
         self._registered_hotkeys = []
         self._hotkey_buttons = {}
         self._rebinding = False
+        self._build_guide_win = None
 
         self._build_ui()
         self.setup_hotkeys()
@@ -346,6 +349,22 @@ class SentinelGUI:
             fg_color=self.colors["bg_hover"], hover_color=self.colors["border"],
             text_color=self.colors["text"], width=150, height=30, corner_radius=6,
             command=self.pick_mana_region,
+        ).pack(side="left")
+
+        # Sync from the game's own config (resolution / flask keys / input mode)
+        sync_card = self._make_card(tab)
+        self._make_section_header(sync_card, "Sync from Game")
+        ctk.CTkLabel(sync_card, text="Import flask keys and check resolution / input mode "
+                                     "from PoE2's own settings.",
+                     font=("Segoe UI", 11), text_color=self.colors["text_secondary"]).pack(
+            anchor="w", padx=16, pady=(0, 8))
+        sync_inner = ctk.CTkFrame(sync_card, fg_color="transparent")
+        sync_inner.pack(fill="x", padx=16, pady=(0, 14))
+        ctk.CTkButton(
+            sync_inner, text="🎮  Import from game config", font=("Segoe UI", 11),
+            fg_color=self.colors["bg_hover"], hover_color=self.colors["border"],
+            text_color=self.colors["text"], width=220, height=30, corner_radius=6,
+            command=self._import_game_config,
         ).pack(side="left")
 
         # Memory Offsets (for advanced users - game patch updates)
@@ -751,6 +770,29 @@ class SentinelGUI:
         self.atlas_fog_status.configure(text="OFF", text_color=self.colors["danger"])
         self.show_toast("Atlas fog cache reset", "info")
 
+    def _import_game_config(self):
+        """Read PoE2's own settings: apply flask keys and surface advisories."""
+        game = game_config.read_game_config()
+        if game is None:
+            self.show_toast("Не нашёл конфиг игры (poe2_production_Config.ini)", "error")
+            return
+        messages = game_config.apply_to_app_config(self.config, game)
+        save_config(self.config)
+        self.bot.reload_config()
+
+        res = f"{game.resolution[0]}x{game.resolution[1]}" if game.resolution else "?"
+        window = "окно" if game.windowed else "полный экран"
+        keys = ", ".join(f"{s}:{k}" for s, k in sorted(game.flask_keys.items())) or "—"
+        summary = (
+            f"Разрешение: {res} ({window})\n"
+            f"Клавиши фласок: {keys}\n"
+            f"Ввод: {game.input_mode or '?'}   Язык: {game.language or '?'}\n"
+            f"Билд игры: {game.build or '?'}"
+        )
+        if messages:
+            summary += "\n\n" + "\n".join("• " + m for m in messages)
+        show_info(self.root, "Импорт из конфига игры", summary, colors=self.colors)
+
     def _open_memory_offsets_dialog(self):
         """Open dialog to edit memory pointer offsets."""
         if self.bot.is_running():
@@ -878,6 +920,23 @@ class SentinelGUI:
 
     def _build_map_tools_panel(self, tab):
         """Build the Map Tools panel content."""
+        # Build Guide card (in-game overlay: active build's gear/skills/passives, RU)
+        guide_frame = ctk.CTkFrame(tab, fg_color=self.colors["bg_card"], border_width=1,
+                                   border_color=self.colors["border"], corner_radius=8)
+        guide_frame.pack(fill="x", padx=10, pady=(10, 10))
+        guide_inner = ctk.CTkFrame(guide_frame, fg_color="transparent")
+        guide_inner.pack(fill="x", padx=12, pady=10)
+        ctk.CTkLabel(guide_inner, text="📖 Гайд по билду", font=("Segoe UI", 12, "bold"),
+                     text_color=self.colors["text"]).pack(side="left")
+        ctk.CTkButton(
+            guide_inner, text="Оверлей", font=("Segoe UI", 11),
+            fg_color=self.colors["primary"], hover_color="#388BFD", text_color="#FFFFFF",
+            width=90, height=28, corner_radius=6, command=self.toggle_build_guide
+        ).pack(side="right")
+        ctk.CTkLabel(guide_frame,
+                     text="Целевые шмотки, навыки и пассивы из активного .build (на русском)",
+                     font=("Segoe UI", 10), text_color="#888888").pack(padx=12, pady=(0, 8))
+
         # Atlas Fog Reveal card
         atlas_fog_frame = ctk.CTkFrame(tab, fg_color=self.colors["bg_card"], border_width=1,
                                        border_color=self.colors["border"], corner_radius=8)
@@ -1527,6 +1586,60 @@ class SentinelGUI:
         elif value_type == "mana":
             self.root.after(0, lambda: self.mana_label.configure(text=f"{current} / {maximum}"))
 
+    def toggle_build_guide(self):
+        """Show/hide the in-game build-guide overlay for the active .build."""
+        win = self._build_guide_win
+        if win is not None and win.winfo_exists():
+            win.destroy()
+            self._build_guide_win = None
+            return
+        guide = build_guide.load_active_build()
+        if not guide:
+            self.show_toast("Активный билд не найден (папка BuildPlanner)", "error")
+            return
+        self._build_guide_win = self._make_build_guide_window(build_guide.render_text(guide))
+
+    def _make_build_guide_window(self, text: str):
+        """Create the frameless, always-on-top build-guide overlay window."""
+        win = ctk.CTkToplevel(self.root)
+        win.title("Build Guide")
+        win.geometry("440x640+40+40")
+        win.configure(fg_color=self.colors["bg_dark"])
+        win.attributes("-topmost", True)
+        try:
+            win.attributes("-alpha", 0.93)
+        except Exception:
+            pass
+        try:
+            win.overrideredirect(True)  # frameless overlay look
+        except Exception:
+            pass
+
+        header = ctk.CTkFrame(win, fg_color=self.colors["bg_sidebar"], height=34, corner_radius=0)
+        header.pack(fill="x")
+        ctk.CTkLabel(header, text="📖 Гайд по билду", font=("Segoe UI", 12, "bold"),
+                     text_color=self.colors["text"]).pack(side="left", padx=10, pady=5)
+        ctk.CTkButton(header, text="✕", width=30, height=24, corner_radius=6,
+                      fg_color=self.colors["bg_hover"], hover_color=self.colors["danger"],
+                      text_color="#FFFFFF", command=win.destroy).pack(side="right", padx=6, pady=4)
+
+        box = ctk.CTkTextbox(win, fg_color=self.colors["bg_card"], text_color=self.colors["text"],
+                             font=("Consolas", 11), wrap="word")
+        box.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+        box.insert("1.0", text)
+        box.configure(state="disabled")
+
+        # Drag by the header (frameless windows have no title bar).
+        def _start(e):
+            win._drag_x, win._drag_y = e.x, e.y
+
+        def _move(e):
+            win.geometry(f"+{win.winfo_pointerx() - win._drag_x}+{win.winfo_pointery() - win._drag_y}")
+
+        header.bind("<Button-1>", _start)
+        header.bind("<B1-Motion>", _move)
+        return win
+
     def show_toast(self, message: str, notification_type: str = "info"):
         """Show toast notification (replaces any existing toast)."""
         # Dismiss all existing toasts first
@@ -1561,7 +1674,27 @@ class SentinelGUI:
         # Check for updates on startup (silent, non-blocking)
         if self.config.get("auto_check_updates", True):
             self.root.after(3000, self._silent_update_check)
+        # One-off advisory from the game's own settings (gamepad / build drift).
+        self.root.after(1500, self._game_config_advisory)
         self.root.mainloop()
+
+    def _game_config_advisory(self):
+        """Non-intrusive startup hint derived from PoE2's own settings."""
+        def worker():
+            try:
+                game = game_config.read_game_config()
+            except Exception:
+                return
+            if not game:
+                return
+            hint = None
+            if game.is_gamepad:
+                hint = "Игра в режиме геймпада — см. Settings → Sync from Game"
+            elif game.build and game.build_matches_validated is False:
+                hint = f"Билд игры {game.build} новее проверенного — оффсеты могли измениться"
+            if hint:
+                self.root.after(0, lambda: self.show_toast(hint, "info"))
+        threading.Thread(target=worker, daemon=True).start()
 
     def _silent_update_check(self):
         """Silently check for updates on startup."""
