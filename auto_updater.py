@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from version import VERSION
 
 # GitHub info
-GITHUB_REPO = "Ace047/POE2-Sentinel"
+GITHUB_REPO = "RostislavKis/POE2-Sentinel"
 RELEASE_ASSET_NAME = "POE2Sentinel.exe"
 
 @dataclass

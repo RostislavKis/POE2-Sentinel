@@ -611,7 +611,7 @@ class SentinelGUI:
     def open_github(self):
         """Open the GitHub repository in the default browser."""
         import webbrowser
-        webbrowser.open("https://github.com/Ace047/POE2-Sentinel")
+        webbrowser.open("https://github.com/RostislavKis/POE2-Sentinel")
 
     def check_for_updates(self):
         """Check GitHub for updates."""
