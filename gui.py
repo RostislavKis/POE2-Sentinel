@@ -8,6 +8,7 @@ import customtkinter as ctk
 import tkinter as tk
 import os
 import sys
+import logging
 import threading
 from typing import Optional
 
@@ -23,7 +24,7 @@ import keyboard
 
 # Try to import overlay (requires PyQt5)
 try:
-    from map_overlay import MapOverlayManager, OverlayConfig, PYQT5_AVAILABLE
+    from map_overlay import MapOverlayManager, PYQT5_AVAILABLE
     OVERLAY_AVAILABLE = PYQT5_AVAILABLE
 except ImportError:
     OVERLAY_AVAILABLE = False
@@ -31,6 +32,8 @@ except ImportError:
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
+
+logger = logging.getLogger("poe2sentinel.gui")
 
 # Default global hotkeys (rebindable from Settings → Hotkeys, persisted to config).
 DEFAULT_HOTKEYS = {
@@ -422,9 +425,11 @@ class SentinelGUI:
             (hotkeys.get("toggle_atlas_fog"), self.toggle_atlas_fog_hotkey),
             (hotkeys.get("toggle_overlay"), self.toggle_terrain_overlay_hotkey),
         ]
+        seen = set()
         for key, handler in bindings:
-            if not key:
-                continue
+            if not key or key in seen:
+                continue  # skip empty or duplicate keys: one key -> one action
+            seen.add(key)
             try:
                 # Store the handler reference (not the key string): keyboard's
                 # internal map only remembers the last registration per key, so
@@ -434,15 +439,15 @@ class SentinelGUI:
                 handle = keyboard.add_hotkey(key, handler)
                 self._registered_hotkeys.append(handle)
             except Exception as e:
-                print(f"Failed to register hotkey '{key}': {e}")
+                logger.error("Failed to register hotkey '%s': %s", key, e)
 
     def _unregister_hotkeys(self):
         """Remove all hotkeys this app has registered."""
         for handle in getattr(self, "_registered_hotkeys", []):
             try:
                 keyboard.remove_hotkey(handle)
-            except Exception:
-                pass
+            except (KeyError, ValueError) as e:
+                logger.debug("Hotkey already removed: %s", e)
         self._registered_hotkeys = []
 
     def _reload_hotkeys(self):
@@ -503,7 +508,7 @@ class SentinelGUI:
                     event = keyboard.read_event(suppress=False)
                 captured = event.name
             except Exception as e:
-                print(f"Hotkey capture failed: {e}")
+                logger.error("Hotkey capture failed: %s", e)
             self.root.after(0, lambda: self._finish_rebind(action, captured))
 
         threading.Thread(target=capture, daemon=True).start()
@@ -525,7 +530,17 @@ class SentinelGUI:
         if key == "esc":
             key = ""
 
-        self.config.setdefault("hotkeys", {})[action] = key
+        hk = self.config.setdefault("hotkeys", {})
+        # A key maps to exactly one action: release it from any other action.
+        if key:
+            for other, other_key in list(hk.items()):
+                if other != action and other_key == key:
+                    hk[other] = ""
+                    other_btn = self._hotkey_buttons.get(other)
+                    if other_btn:
+                        other_btn.configure(text=self._hotkey_label(""),
+                                            text_color=self.colors["primary"])
+        hk[action] = key
         save_config(self.config)
         self._reload_hotkeys()
         if btn:
@@ -539,14 +554,10 @@ class SentinelGUI:
         already running (hidden) when the user presses F11.
         """
         if not self.terrain_overlay:
-            print("[PRE-SPAWN] No terrain overlay manager")
             return
 
         def spawn_in_background():
-            import time
             from map_overlay import OverlayConfig, hex_to_rgba
-            print("[PRE-SPAWN] Starting overlay process...")
-            t0 = time.time()
             try:
                 # Get current overlay config (simplified - just use defaults for pre-spawn)
                 overlay_cfg = self.config.get("overlay", {})
@@ -566,17 +577,12 @@ class SentinelGUI:
 
                 # Start the process (it will be hidden initially since we don't call show)
                 # The process will start and connect to the game in background
-                result = self.terrain_overlay._ensure_process_running()
-                t1 = time.time()
-                print(f"[PRE-SPAWN] Process started in {(t1-t0)*1000:.0f}ms, result={result}")
-                print("[PRE-SPAWN] Overlay process pre-spawned and ready - F11 should be instant now!")
+                self.terrain_overlay._ensure_process_running()
+                logger.debug("Overlay process pre-spawned and ready")
             except Exception as e:
-                import traceback
-                print(f"[PRE-SPAWN] Failed to pre-spawn overlay: {e}")
-                traceback.print_exc()
+                logger.error("Failed to pre-spawn overlay: %s", e)
 
-        # Spawn after a short delay so it doesn't slow down GUI startup
-        print("[PRE-SPAWN] Scheduling pre-spawn in 500ms...")
+        # Spawn after a short delay so it doesn't slow down GUI startup.
         self.root.after(500, spawn_in_background)
 
     def show_help(self):
@@ -630,9 +636,9 @@ class SentinelGUI:
             return
 
         # Show first 5 lines of release notes to avoid overwhelming the user
-        notes_lines = release.release_notes.strip().split('\n')[:5]
-        notes = '\n'.join(notes_lines)
-        if len(release.release_notes.strip().split('\n')) > 5:
+        all_lines = release.release_notes.strip().split('\n')
+        notes = '\n'.join(all_lines[:5])
+        if len(all_lines) > 5:
             notes += "\n(+ more...)"
 
         msg = f"Version {release.version} is available!\n\nWhat's new:\n{notes}\n\nDownload and install now?"
@@ -725,13 +731,14 @@ class SentinelGUI:
         self.root.after(300, lambda: self._do_pick_region("mana"))
 
     def _do_pick_region(self, region_type: str):
-        """Actually perform the region pick after window is minimized."""
-        region = pick_region(region_type, parent=self.root)
-        self.root.deiconify()  # Restore window
+        """Actually perform the region pick after the window is minimized."""
+        try:
+            region = pick_region(region_type, parent=self.root)
+        finally:
+            self.root.deiconify()  # Always restore the window, even on error
 
         if region:
-            # Save to config
-            self.config[region_type]["region"] = region
+            self.config.setdefault(region_type, {})["region"] = region
             save_config(self.config)
             self.bot.reload_config()
             self.show_toast(f"{region_type.title()} region saved!", "success")
@@ -1287,6 +1294,9 @@ class SentinelGUI:
         mode = selected.lower()
         self.bot.set_detection_mode(mode)
         self.config = load_config()  # Reload to stay in sync
+        hotkeys = self.config.setdefault("hotkeys", {})
+        for action, default_key in DEFAULT_HOTKEYS.items():
+            hotkeys.setdefault(action, default_key)
 
         if mode == "memory":
             self.subtitle_label.configure(text="Memory mode • Pointer Chains")
@@ -1313,9 +1323,14 @@ class SentinelGUI:
             self.show_toast(f"Bot started ({mode} mode)", "success")
 
     def toggle_atlas_fog(self):
-        """Toggle atlas fog reveal on/off."""
-        success, message = self.atlas_fog.toggle()
+        """Toggle atlas fog reveal on/off (the memory scan runs off the UI thread)."""
+        def worker():
+            success, message = self.atlas_fog.toggle()
+            self.root.after(0, lambda: self._atlas_fog_done(success, message))
+        threading.Thread(target=worker, daemon=True).start()
 
+    def _atlas_fog_done(self, success: bool, message: str):
+        """Apply the atlas-fog toggle result on the UI thread."""
         if success:
             if self.atlas_fog.is_enabled:
                 self.atlas_fog_status.configure(text="ON", text_color=self.colors["success"])
@@ -1532,9 +1547,12 @@ class SentinelGUI:
 
         # Shutdown terrain overlay (terminates the persistent process)
         if self.terrain_overlay:
-            self.terrain_overlay.shutdown()
+            try:
+                self.terrain_overlay.shutdown()
+            except Exception as e:
+                logger.error("Overlay shutdown failed: %s", e)
 
-        # Clean up hotkeys
+        # Clean up hotkeys, then close the window no matter what.
         self._unregister_hotkeys()
         self.root.destroy()
 
