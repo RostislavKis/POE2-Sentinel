@@ -17,6 +17,7 @@ import pymem
 import pymem.process
 import ctypes
 from ctypes import wintypes
+from types import SimpleNamespace
 from typing import Optional, Callable, Dict, Any, List, Tuple
 
 # OCR imports (optional - graceful fallback if not available)
@@ -28,6 +29,14 @@ try:
 except ImportError:
     OCR_AVAILABLE = False
 
+# Foreground-window detection (optional - graceful fallback if not available)
+try:
+    import win32gui
+    import pygetwindow as gw
+    WINDOW_API_AVAILABLE = True
+except ImportError:
+    WINDOW_API_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 _RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS if OCR_AVAILABLE else None
 
@@ -35,7 +44,28 @@ _RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS if OCR_AVAILABLE else No
 PROCESS_VM_READ = 0x0010
 PROCESS_VM_WRITE = 0x0020
 PROCESS_VM_OPERATION = 0x0008
-PROCESS_ALL_ACCESS = 0x1F0FFF
+PAGE_EXECUTE_READWRITE = 0x40
+
+# Upper bound for a plausible HP/ES/Mana pool. Real PoE2 pools stay far below
+# this; garbage reads from a stale pointer read as huge or negative and fail it.
+VITAL_SANE_MAX = 200_000
+
+
+def _init_kernel32(k) -> None:
+    """Set argtypes/restypes so 64-bit handles/pointers are not truncated."""
+    k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k.OpenProcess.restype = wintypes.HANDLE
+    k.CloseHandle.argtypes = [wintypes.HANDLE]
+    k.CloseHandle.restype = wintypes.BOOL
+    k.ReadProcessMemory.argtypes = [wintypes.HANDLE, wintypes.LPCVOID, wintypes.LPVOID,
+                                    ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
+    k.ReadProcessMemory.restype = wintypes.BOOL
+    k.WriteProcessMemory.argtypes = [wintypes.HANDLE, wintypes.LPVOID, wintypes.LPCVOID,
+                                     ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
+    k.WriteProcessMemory.restype = wintypes.BOOL
+    k.VirtualProtectEx.argtypes = [wintypes.HANDLE, wintypes.LPVOID, ctypes.c_size_t,
+                                   wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    k.VirtualProtectEx.restype = wintypes.BOOL
 
 
 def _get_base_dir() -> str:
@@ -73,19 +103,49 @@ DEFAULT_CONFIG = {
 }
 
 
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge ``override`` onto a deep copy of ``base``."""
+    result = json.loads(json.dumps(base))
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
 def load_config() -> dict:
-    """Load configuration from file."""
+    """Load configuration merged over defaults; recover from a corrupt/missing file."""
     if not os.path.exists(CONFIG_PATH):
         save_config(DEFAULT_CONFIG)
-        return json.loads(json.dumps(DEFAULT_CONFIG))
-    with open(CONFIG_PATH, "r") as f:
-        return json.load(f)
+        return _deep_merge(DEFAULT_CONFIG, {})
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        if not isinstance(loaded, dict):
+            raise ValueError("config root is not a JSON object")
+        return _deep_merge(DEFAULT_CONFIG, loaded)
+    except (json.JSONDecodeError, OSError, ValueError) as e:
+        logger.error("Failed to read config (%s); falling back to defaults", e)
+        return _deep_merge(DEFAULT_CONFIG, {})
 
 
 def save_config(config: dict) -> None:
-    """Save configuration to file."""
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(config, f, indent=2)
+    """Save configuration atomically (write temp file, then replace)."""
+    tmp_path = CONFIG_PATH + ".tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, CONFIG_PATH)
+    except OSError as e:
+        logger.error("Failed to save config: %s", e)
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
 
 
 class MemoryReader:
@@ -174,7 +234,7 @@ class MemoryReader:
         if self.pm:
             try:
                 self.pm.close_process()
-            except:
+            except Exception:
                 pass
         self.pm = None
         self.connected = False
@@ -197,7 +257,7 @@ class MemoryReader:
                 # Add the offset to get next address
                 address = ptr + offset
             return address
-        except:
+        except Exception:
             return None
 
     def _read_value(self, base_offset: int, chain: List[int]) -> int:
@@ -207,7 +267,7 @@ class MemoryReader:
             addr = self._read_pointer_chain(base, chain)
             if addr:
                 return self.pm.read_int(addr)
-        except:
+        except Exception:
             pass
         return 0
 
@@ -224,7 +284,7 @@ class MemoryReader:
             mp_max = self._read_value(self.max_mp_base, self.max_mp_chain)
 
             # Sanity check
-            if not (0 < hp_current < 50000 and 0 < hp_max < 50000):
+            if not (0 < hp_current <= VITAL_SANE_MAX and 0 < hp_max <= VITAL_SANE_MAX):
                 self.connected = False
                 return None
 
@@ -318,8 +378,26 @@ class StructureReader:
         self._life_component_cache: Optional[int] = None
         self._cached_player_ptr: Optional[int] = None  # Track player ptr for zone change detection
 
-        # Load custom offsets from config if provided
+        # Per-instance offset set (never mutate the shared class defaults).
+        self._reset_offsets()
         self._load_offsets(config)
+
+    def _reset_offsets(self) -> None:
+        """Initialise this instance's offsets from the class defaults."""
+        self.Offsets = SimpleNamespace(**{
+            k: v for k, v in vars(StructureReader.Offsets).items()
+            if not k.startswith("__")
+        })
+
+    def reload_offsets(self, config: dict) -> None:
+        """Re-apply offsets from an updated config and force a reconnect."""
+        self._reset_offsets()
+        self._load_offsets(config)
+        self.connected = False
+        self._game_state_slot = None
+        self._life_component_cache = None
+        self._cached_player_ptr = None
+        logger.info("Structure offsets reloaded, will reconnect on next read")
 
     def _load_offsets(self, config: Optional[dict]) -> None:
         """Load structure offsets from config (allows patching without code changes)."""
@@ -375,7 +453,7 @@ class StructureReader:
         if self.pm:
             try:
                 self.pm.close_process()
-            except:
+            except Exception:
                 pass
         self.pm = None
         self.connected = False
@@ -388,7 +466,7 @@ class StructureReader:
             return None
         try:
             return self.pm.read_longlong(address)
-        except:
+        except Exception:
             return None
 
     def _read_int(self, address: int) -> Optional[int]:
@@ -397,7 +475,7 @@ class StructureReader:
             return None
         try:
             return self.pm.read_int(address)
-        except:
+        except Exception:
             return None
 
     def _read_bytes(self, address: int, size: int) -> Optional[bytes]:
@@ -406,7 +484,7 @@ class StructureReader:
             return None
         try:
             return self.pm.read_bytes(address, size)
-        except:
+        except Exception:
             return None
 
     def _scan_for_pattern(self, pattern: List[Optional[int]], disp_offset: int,
@@ -437,7 +515,7 @@ class StructureReader:
                 chunk_base = base + offset
                 try:
                     data = self.pm.read_bytes(chunk_base, read_size)
-                except:
+                except Exception:
                     continue
 
                 # Search for pattern
@@ -538,7 +616,7 @@ class StructureReader:
             return ""
         try:
             return data.split(b'\x00')[0].decode('utf-8')
-        except:
+        except Exception:
             return ""
 
     def _resolve_life_component(self, entity_ptr: int) -> Optional[int]:
@@ -586,10 +664,18 @@ class StructureReader:
 
         return None
 
+    @staticmethod
+    def _sanitise_pool(cur: int, mx: int) -> Tuple[int, int]:
+        """Clamp an optional (current, max) pool; return (0, 0) if implausible."""
+        if not (0 < mx <= VITAL_SANE_MAX) or not (0 <= cur <= mx):
+            return (0, 0)
+        return (cur, mx)
+
     def _read_vital_struct(self, life_component: int, vital_offset: int) -> Tuple[int, int]:
         """Read current and max values from a VitalStruct."""
-        data = self._read_bytes(life_component + vital_offset, 52)
-        if not data or len(data) < 52:
+        need = max(self.Offsets.VITAL_MAX, self.Offsets.VITAL_CURRENT) + 4
+        data = self._read_bytes(life_component + vital_offset, need)
+        if not data or len(data) < need:
             return (0, 0)
 
         max_val = struct.unpack_from('<i', data, self.Offsets.VITAL_MAX)[0]
@@ -637,11 +723,17 @@ class StructureReader:
             es_cur, es_max = self._read_vital_struct(life, self.Offsets.ENERGY_SHIELD)
             mp_cur, mp_max = self._read_vital_struct(life, self.Offsets.MANA)
 
-            # Sanity check
-            if hp_max <= 0 or hp_max > 50000:
+            # HP is always present in PoE2; an invalid HP read means a stale
+            # pointer, so drop the cache and skip this tick.
+            if not (0 < hp_max <= VITAL_SANE_MAX) or not (0 <= hp_cur <= hp_max):
                 self._life_component_cache = None  # Invalidate cache
                 self._cached_player_ptr = None  # Also reset player cache
                 return None
+
+            # ES/Mana are optional pools: sanitise each independently so a garbage
+            # read for one cannot drive a flask decision.
+            es_cur, es_max = self._sanitise_pool(es_cur, es_max)
+            mp_cur, mp_max = self._sanitise_pool(mp_cur, mp_max)
 
             return {
                 "hp_current": hp_cur,
@@ -725,7 +817,10 @@ class OCRReader:
         elif self.learned_life_max:
             life_max = self.learned_life_max
         else:
-            life_max = life_current  # Fallback
+            # No max seen yet: percent thresholds need a real max, so skip this
+            # cycle rather than faking max == current (which can never trigger).
+            logger.debug("OCR life max not yet calibrated (need an 'x/y' reading)")
+            return None
 
         # Read mana
         mana_reading = self._read_resource(mana_region)
@@ -738,7 +833,8 @@ class OCRReader:
         elif self.learned_mana_max:
             mana_max = self.learned_mana_max
         else:
-            mana_max = mana_current  # Fallback
+            logger.debug("OCR mana max not yet calibrated (need an 'x/y' reading)")
+            return None
 
         return {
             "hp_current": life_current,
@@ -791,197 +887,6 @@ class OCRReader:
         pass
 
 
-class MapReveal:
-    """POE2 Map Reveal using AOB pattern scanning.
-
-    Finds and modifies a single byte in memory to reveal the minimap layout.
-    """
-
-    PROCESS_NAMES = {
-        "steam": "PathOfExileSteam.exe",
-        "standalone": "PathOfExile.exe",
-        "epic": "PathOfExile.exe",
-    }
-
-    # AOB pattern to find the map reveal toggle location
-    # Pattern: 41 80 7F 58 00 74 05
-    # The byte at offset +4 (the 00) is what we modify
-    SEARCH_PATTERN = bytes([0x41, 0x80, 0x7F, 0x58, 0x00, 0x74, 0x05])
-    PATTERN_OFFSET = 4  # Offset from pattern start to the toggle byte
-
-    def __init__(self, game_version: str = "steam"):
-        self.game_version = game_version
-        self.process_handle: Optional[int] = None
-        self.pattern_address: Optional[int] = None
-        self.is_enabled = False
-        self._lock = threading.Lock()
-
-        # Load kernel32 functions
-        self.kernel32 = ctypes.windll.kernel32
-
-    def _open_process(self, pid: int) -> Optional[int]:
-        """Open process with read/write access."""
-        handle = self.kernel32.OpenProcess(
-            PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
-            False,
-            pid
-        )
-        return handle if handle else None
-
-    def _close_handle(self, handle: int) -> None:
-        """Close process handle."""
-        if handle:
-            self.kernel32.CloseHandle(handle)
-
-    def _read_memory(self, handle: int, address: int, size: int) -> Optional[bytes]:
-        """Read memory from process."""
-        buffer = ctypes.create_string_buffer(size)
-        bytes_read = ctypes.c_size_t()
-        success = self.kernel32.ReadProcessMemory(
-            handle,
-            ctypes.c_void_p(address),
-            buffer,
-            size,
-            ctypes.byref(bytes_read)
-        )
-        return buffer.raw if success else None
-
-    def _write_memory(self, handle: int, address: int, data: bytes) -> bool:
-        """Write memory to process."""
-        buffer = ctypes.create_string_buffer(data)
-        bytes_written = ctypes.c_size_t()
-        success = self.kernel32.WriteProcessMemory(
-            handle,
-            ctypes.c_void_p(address),
-            buffer,
-            len(data),
-            ctypes.byref(bytes_written)
-        )
-        return bool(success)
-
-    def _find_pattern(self, handle: int, pm: pymem.Pymem) -> Optional[int]:
-        """Search for the AOB pattern in process memory."""
-        BUFFER_SIZE = 4096
-
-        # Get list of modules using pymem
-        try:
-            modules = list(pm.list_modules())
-        except:
-            # Fallback: just search main module
-            modules = []
-
-        # If no modules found, try the main module directly
-        if not modules:
-            try:
-                base_address = pm.base_address
-                # Estimate a reasonable size for the main module
-                module_size = 0x10000000  # 256MB max search
-                modules = [(base_address, module_size)]
-            except:
-                return None
-        else:
-            # Convert module objects to (base, size) tuples
-            modules = [(m.lpBaseOfDll, m.SizeOfImage) for m in modules]
-
-        for base_address, module_size in modules:
-            try:
-                for offset in range(0, module_size, BUFFER_SIZE):
-                    bytes_to_read = min(BUFFER_SIZE, module_size - offset)
-                    data = self._read_memory(handle, base_address + offset, bytes_to_read)
-
-                    if data:
-                        # Search for pattern in this chunk
-                        idx = data.find(self.SEARCH_PATTERN)
-                        if idx != -1:
-                            found_addr = base_address + offset + idx
-                            logger.info(f"Map reveal pattern found at {hex(found_addr)}")
-                            return found_addr
-            except Exception as e:
-                continue
-
-        return None
-
-    def _get_process(self) -> Optional[pymem.Pymem]:
-        """Get the game process."""
-        process_name = self.PROCESS_NAMES.get(self.game_version, "PathOfExileSteam.exe")
-        try:
-            return pymem.Pymem(process_name)
-        except:
-            return None
-
-    def toggle(self) -> Tuple[bool, str]:
-        """Toggle map reveal on/off. Returns (success, message)."""
-        with self._lock:
-            process = self._get_process()
-            if not process:
-                return False, "Game not running"
-
-            try:
-                handle = self._open_process(process.process_id)
-                if not handle:
-                    return False, "Failed to open process"
-
-                # Find pattern if we haven't already
-                if self.pattern_address is None:
-                    self.pattern_address = self._find_pattern(handle, process)
-                    if self.pattern_address is None:
-                        self._close_handle(handle)
-                        return False, "Pattern not found (game version may have changed)"
-
-                # Read current value
-                toggle_address = self.pattern_address + self.PATTERN_OFFSET
-                current = self._read_memory(handle, toggle_address, 1)
-
-                if current is None:
-                    self._close_handle(handle)
-                    return False, "Failed to read memory"
-
-                # Toggle the value
-                current_byte = current[0]
-                new_byte = 0x00 if current_byte == 0x01 else 0x01
-
-                success = self._write_memory(handle, toggle_address, bytes([new_byte]))
-                self._close_handle(handle)
-
-                if success:
-                    self.is_enabled = (new_byte == 0x01)
-                    state = "enabled" if self.is_enabled else "disabled"
-                    logger.info(f"Map reveal {state}")
-                    return True, f"Map reveal {state}"
-                else:
-                    return False, "Failed to write memory"
-
-            except Exception as e:
-                logger.error(f"Map reveal toggle error: {e}")
-                return False, str(e)
-            finally:
-                try:
-                    process.close_process()
-                except:
-                    pass
-
-    def enable(self) -> Tuple[bool, str]:
-        """Enable map reveal."""
-        if self.is_enabled:
-            return True, "Already enabled"
-        return self.toggle()
-
-    def disable(self) -> Tuple[bool, str]:
-        """Disable map reveal."""
-        if not self.is_enabled:
-            return True, "Already disabled"
-        return self.toggle()
-
-    def get_status(self) -> bool:
-        """Get current map reveal status."""
-        return self.is_enabled
-
-    def reset(self) -> None:
-        """Reset cached pattern address (use after game restart)."""
-        self.pattern_address = None
-        self.is_enabled = False
-
-
 class AtlasFogReveal:
     """POE2 Atlas Fog Reveal using AOB pattern scanning.
 
@@ -1010,14 +915,14 @@ class AtlasFogReveal:
 
     def __init__(self, game_version: str = "steam"):
         self.game_version = game_version
-        self.process_handle: Optional[int] = None
         self.pattern_address: Optional[int] = None
         self.is_enabled = False
         self.original_bytes: Optional[bytes] = None  # Store original for restore
         self._lock = threading.Lock()
 
-        # Load kernel32 functions
+        # Load kernel32 with correct 64-bit prototypes.
         self.kernel32 = ctypes.windll.kernel32
+        _init_kernel32(self.kernel32)
 
     def _open_process(self, pid: int) -> Optional[int]:
         """Open process with read/write access."""
@@ -1034,7 +939,7 @@ class AtlasFogReveal:
             self.kernel32.CloseHandle(handle)
 
     def _read_memory(self, handle: int, address: int, size: int) -> Optional[bytes]:
-        """Read memory from process."""
+        """Read exactly ``size`` bytes; return None on a short or failed read."""
         buffer = ctypes.create_string_buffer(size)
         bytes_read = ctypes.c_size_t()
         success = self.kernel32.ReadProcessMemory(
@@ -1044,20 +949,42 @@ class AtlasFogReveal:
             size,
             ctypes.byref(bytes_read)
         )
-        return buffer.raw if success else None
+        if not success or bytes_read.value != size:
+            return None
+        return buffer.raw[:bytes_read.value]
 
     def _write_memory(self, handle: int, address: int, data: bytes) -> bool:
-        """Write memory to process."""
-        buffer = ctypes.create_string_buffer(data)
-        bytes_written = ctypes.c_size_t()
-        success = self.kernel32.WriteProcessMemory(
-            handle,
-            ctypes.c_void_p(address),
-            buffer,
-            len(data),
-            ctypes.byref(bytes_written)
-        )
-        return bool(success)
+        """Write ``data`` to executable memory, verifying the full write.
+
+        The target is code in .text, so make the page writable for the write and
+        restore its original protection afterwards.
+        """
+        size = len(data)
+        old_protect = wintypes.DWORD(0)
+        if not self.kernel32.VirtualProtectEx(
+            handle, ctypes.c_void_p(address), size,
+            PAGE_EXECUTE_READWRITE, ctypes.byref(old_protect)
+        ):
+            return False
+        try:
+            buffer = ctypes.create_string_buffer(data)
+            bytes_written = ctypes.c_size_t()
+            success = self.kernel32.WriteProcessMemory(
+                handle, ctypes.c_void_p(address), buffer, size,
+                ctypes.byref(bytes_written)
+            )
+            return bool(success) and bytes_written.value == size
+        finally:
+            restored = wintypes.DWORD(0)
+            self.kernel32.VirtualProtectEx(
+                handle, ctypes.c_void_p(address), size,
+                old_protect.value, ctypes.byref(restored)
+            )
+
+    def _matches_original(self, current: bytes) -> bool:
+        """True if ``current`` matches the fog instruction (index 4 is a wildcard)."""
+        expected = self.ORIGINAL_BYTES[:self.BYTES_TO_PATCH]
+        return all(current[i] == b for i, b in enumerate(expected) if i != 4)
 
     def _find_pattern(self, handle: int, pm: pymem.Pymem) -> Optional[int]:
         """Search for the Atlas fog AOB pattern in process memory.
@@ -1066,21 +993,14 @@ class AtlasFogReveal:
         """
         BUFFER_SIZE = 8192  # Larger buffer for efficiency
 
-        # Get list of modules using pymem
+        # Enumerate loaded modules; never fall back to a blind, unbounded scan.
         try:
             modules = list(pm.list_modules())
-        except:
-            modules = []
-
+        except Exception:
+            return None
         if not modules:
-            try:
-                base_address = pm.base_address
-                module_size = 0x10000000  # 256MB max search
-                modules = [(base_address, module_size)]
-            except:
-                return None
-        else:
-            modules = [(m.lpBaseOfDll, m.SizeOfImage) for m in modules]
+            return None
+        modules = [(m.lpBaseOfDll, m.SizeOfImage) for m in modules]
 
         for base_address, module_size in modules:
             try:
@@ -1115,7 +1035,7 @@ class AtlasFogReveal:
         process_name = self.PROCESS_NAMES.get(self.game_version, "PathOfExileSteam.exe")
         try:
             return pymem.Pymem(process_name)
-        except:
+        except Exception:
             return None
 
     def toggle(self) -> Tuple[bool, str]:
@@ -1125,6 +1045,7 @@ class AtlasFogReveal:
             if not process:
                 return False, "Game not running"
 
+            handle = None
             try:
                 handle = self._open_process(process.process_id)
                 if not handle:
@@ -1134,49 +1055,41 @@ class AtlasFogReveal:
                 if self.pattern_address is None:
                     self.pattern_address = self._find_pattern(handle, process)
                     if self.pattern_address is None:
-                        self._close_handle(handle)
                         return False, "Atlas fog pattern not found"
 
-                # Read current bytes
                 current = self._read_memory(handle, self.pattern_address, self.BYTES_TO_PATCH)
-
                 if current is None:
-                    self._close_handle(handle)
                     return False, "Failed to read memory"
 
-                # Check if currently NOPed (enabled) or original (disabled)
                 if current == self.NOP_BYTES:
-                    # Currently enabled (NOPed) - restore original
-                    restore_bytes = self.original_bytes if self.original_bytes else self.ORIGINAL_BYTES[:5]
-                    success = self._write_memory(handle, self.pattern_address, restore_bytes)
-                    self._close_handle(handle)
-
-                    if success:
-                        self.is_enabled = False
-                        logger.info("Atlas fog reveal disabled (restored original)")
-                        return True, "Atlas fog reveal disabled"
-                    else:
+                    # Currently enabled (NOPed) - restore the saved original bytes.
+                    restore_bytes = self.original_bytes or self.ORIGINAL_BYTES[:self.BYTES_TO_PATCH]
+                    if not self._write_memory(handle, self.pattern_address, restore_bytes):
                         return False, "Failed to write memory"
-                else:
-                    # Currently disabled - save original and NOP
-                    self.original_bytes = current  # Save for restore
-                    success = self._write_memory(handle, self.pattern_address, self.NOP_BYTES)
-                    self._close_handle(handle)
+                    self.is_enabled = False
+                    logger.info("Atlas fog reveal disabled (restored original)")
+                    return True, "Atlas fog reveal disabled"
 
-                    if success:
-                        self.is_enabled = True
-                        logger.info("Atlas fog reveal enabled (NOPed)")
-                        return True, "Atlas fog reveal enabled"
-                    else:
-                        return False, "Failed to write memory"
+                # Currently disabled - verify this really is the fog instruction
+                # before overwriting executable code, then NOP it.
+                if not self._matches_original(current):
+                    return False, "Unexpected bytes at pattern site (game updated?)"
+                self.original_bytes = current  # Save for restore
+                if not self._write_memory(handle, self.pattern_address, self.NOP_BYTES):
+                    return False, "Failed to write memory"
+                self.is_enabled = True
+                logger.info("Atlas fog reveal enabled (NOPed)")
+                return True, "Atlas fog reveal enabled"
 
             except Exception as e:
                 logger.error(f"Atlas fog toggle error: {e}")
                 return False, str(e)
             finally:
+                if handle:
+                    self._close_handle(handle)
                 try:
                     process.close_process()
-                except:
+                except Exception:
                     pass
 
     def enable(self) -> Tuple[bool, str]:
@@ -1210,7 +1123,7 @@ class FlaskBot:
         self.running = False
         self.monitor_thread: Optional[threading.Thread] = None
         self.on_update = on_update
-        self.detection_mode = self.config.get("detection_mode", "memory")
+        self.detection_mode = self.config.get("detection_mode", "structure")
         self._init_reader()
 
         # Track last use times for cooldowns
@@ -1222,7 +1135,7 @@ class FlaskBot:
     def _init_reader(self) -> None:
         """Initialize the appropriate reader based on detection mode."""
         # Sync detection mode from config
-        self.detection_mode = self.config.get("detection_mode", "memory")
+        self.detection_mode = self.config.get("detection_mode", "structure")
 
         if self.detection_mode == "ocr":
             self.reader = OCRReader(self.config)
@@ -1235,11 +1148,13 @@ class FlaskBot:
             logger.info("Using Memory detection mode (pointer chains)")
 
     def reload_config(self) -> None:
-        """Reload configuration from file."""
+        """Reload configuration from file and re-apply it to the active reader."""
         self.config = load_config()
-        # Reload memory offsets if using memory reader
-        if hasattr(self, 'reader') and isinstance(self.reader, MemoryReader):
-            self.reader.reload_offsets(self.config)
+        reader = getattr(self, "reader", None)
+        if isinstance(reader, OCRReader):
+            reader.config = self.config
+        elif reader is not None and hasattr(reader, "reload_offsets"):
+            reader.reload_offsets(self.config)
 
     def set_detection_mode(self, mode: str) -> None:
         """Change detection mode (memory/ocr/structure)."""
@@ -1262,16 +1177,15 @@ class FlaskBot:
             return float(cfg.get("threshold_absolute", 500))
 
     def _is_poe_active(self) -> bool:
-        """Check if POE2 is the active window."""
+        """Check whether a Path of Exile window is currently in the foreground."""
+        if not WINDOW_API_AVAILABLE:
+            return False  # Cannot confirm focus -> never send keystrokes blindly.
         try:
-            import win32gui
-            import pygetwindow as gw
             hwnd = win32gui.GetForegroundWindow()
-            if hwnd == 0:
+            if not hwnd:
                 return False
-            window_title = gw.Window(hwnd).title
-            return "Path of Exile" in window_title
-        except:
+            return "Path of Exile" in gw.Window(hwnd).title
+        except Exception:
             return False
 
     def _monitor_loop(self) -> None:
@@ -1381,10 +1295,13 @@ class FlaskBot:
         self.monitor_thread.start()
 
     def stop(self) -> None:
-        """Stop the flask bot."""
+        """Stop the flask bot and wait for the monitor thread to finish."""
         self.running = False
-        self.reader.disconnect()
+        thread = self.monitor_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
         self.monitor_thread = None
+        self.reader.disconnect()
 
     def is_running(self) -> bool:
         """Check if the bot is running."""
